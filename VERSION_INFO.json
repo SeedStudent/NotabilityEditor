@@ -1,0 +1,36 @@
+{
+  "version": "0.7.6-Beta",
+  "base_version": "0.7.6",
+  "stage": "Beta",
+  "channel": "relese",
+  "internal_iteration": null,
+  "release_label_spelling": "relese",
+  "version_order": {
+    "comparison_order": [
+      "基础版本号（主、次、修订号）",
+      "同基础版本和 Beta 阶段的发布渠道",
+      "内部版本的数字编号"
+    ],
+    "relese_priority": "同一基础版本和 Beta 阶段下，relese 高于任意 v数字 内部版本，不设内部编号阈值。",
+    "internal_priority": "v数字 按整数比较，例如 v10 > v9；不得按字符串字典序比较。",
+    "base_priority": "基础版本号优先，因此 0.7.7-Beta-v1 高于 0.7.6-Beta (relese)。",
+    "examples_ascending": [
+      "0.7.6-Beta-v12",
+      "0.7.6-Beta-v999",
+      "0.7.6-Beta (relese)",
+      "0.7.7-Beta-v1",
+      "0.7.7-Beta-v2",
+      "0.7.7-Beta-v10"
+    ]
+  },
+  "description": "图片上批注、自由形状和矩形选取、本地 AI 辅助选取；新增原创代码采用 0BSD，并附免责条款。",
+  "windows_registration_policy": "注册或安装前比较已安装和已注册版本；同基础版本 relese 高于所有内部 v数字，旧版本不能覆盖较新版本。",
+  "product_name": "NotabilityEditor",
+  "legacy_product_names": [
+    "NotabilityViewer",
+    "Notability Viewer"
+  ],
+  "compatibility_policy": "对外名称、安装目录、用户数据和 QSettings 使用 NotabilityEditor；启动时将旧 NotabilityViewer 日志、数据及设置校验迁移到新位置并删除旧项，成功安装后按归属清理旧程序、卸载记录和快捷方式，保留笔记内容及 NTB 格式兼容标识。跨名称安装与注册仍统一比较版本。",
+  "license": "0BSD",
+  "license_scope": "Original project contributions only; see LICENSE_SCOPE and THIRD_PARTY_NOTICES."
+}
