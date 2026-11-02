@@ -1,4 +1,4 @@
-# NotabilityEditor 0.7.6-Beta - Windows one-click build and per-user install.
+# NotabilityEditor 0.7.7-Beta - Windows one-click build and per-user install.
 # ASCII-only source for reliable execution with Windows PowerShell 5.1.
 # No administrator privileges, no global Python modifications.
 $ErrorActionPreference = 'Stop'
@@ -23,12 +23,12 @@ $venvPath = Join-Path $root '.build-venv'
 $venvPython = Join-Path $venvPath 'Scripts\python.exe'
 $requirements = Join-Path $root 'requirements.txt'
 $entryPoint = Join-Path $root 'main.py'
-$runtimeHook = Join-Path $root 'runtime\nv_runtime_qt.py'
+$runtimeHook = Join-Path $root 'runtime\ne_runtime_qt.py'
 $icon = Join-Path $root 'assets\notability-viewer.ico'
 $versionInfo = Join-Path $root 'windows_version_info.ver'
 $distDir = Join-Path $root 'dist'
 $workDir = Join-Path $root '.pyinstaller-build'
-$exeName = 'NotabilityEditor-0.7.6-Beta.exe'
+$exeName = 'NotabilityEditor-0.7.7-Beta.exe'
 $buildExe = Join-Path $distDir $exeName
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\NotabilityEditor'
 $installedExe = Join-Path $installDir 'NotabilityEditor.exe'
@@ -195,7 +195,7 @@ try {
     Run $venvPython @('-c', 'import onnxruntime; import sys, numpy, lxml, fitz; from PyQt6.QtPdf import QPdfDocument; from PyQt6.QtSvgWidgets import QSvgWidget; import main')
 
     Step 'Checking installed and registered version priority'
-    Run $venvPython @('-c', 'from platform_integration.nv_install import VERSION; from core.nv_version import ensure_registration_allowed; ensure_registration_allowed(VERSION)')
+    Run $venvPython @('-c', 'from platform_integration.ne_install import VERSION; from core.ne_version import ensure_registration_allowed; ensure_registration_allowed(VERSION)')
 
     # A running copy locks the EXE, causing PyInstaller WinError 5 at the final step.
     Step 'Checking for running Viewer or Editor processes'
@@ -223,7 +223,7 @@ try {
     $dataMapping = $assetsDir + ';assets'
     Run $venvPython @(
         '-m', 'PyInstaller', '--noconfirm', '--clean', '--onefile', '--windowed', '--noupx',
-        '--name', 'NotabilityEditor-0.7.6-Beta', '--icon', $icon, '--version-file', $versionInfo,
+        '--name', 'NotabilityEditor-0.7.7-Beta', '--icon', $icon, '--version-file', $versionInfo,
         '--add-data', $dataMapping, '--runtime-hook', $runtimeHook,
         '--distpath', $distDir, '--workpath', $workDir, '--specpath', $workDir,
         $entryPoint
@@ -232,9 +232,9 @@ try {
         throw ('PyInstaller exited but the expected EXE was not found: ' + $buildExe)
     }
 
-    Run $venvPython @('-c', 'from platform_integration.nv_install import VERSION; from core.nv_version import ensure_registration_allowed; ensure_registration_allowed(VERSION)')
+    Run $venvPython @('-c', 'from platform_integration.ne_install import VERSION; from core.ne_version import ensure_registration_allowed; ensure_registration_allowed(VERSION)')
     Step 'Installing for the current Windows user'
-    Run $venvPython @('-c', 'import sys; from platform_integration.nv_install import install_application; from platform_integration.nv_migrate import update_shortcuts; target = install_application(sys.argv[1]); update_shortcuts(target, None)', $buildExe)
+    Run $venvPython @('-c', 'import sys; from platform_integration.ne_install import install_application; from platform_integration.ne_migrate import update_shortcuts; target = install_application(sys.argv[1]); update_shortcuts(target, None)', $buildExe)
     # Confirm replacement really installed the newly built bytes rather than
     # leaving a stale copy under a previous 0.7.2-Beta release.
     $expectedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $buildExe).Hash
@@ -242,7 +242,7 @@ try {
     if ($actualHash -ne $expectedHash) {
         throw 'Installed EXE SHA256 mismatch. Old app may still be running or installation was blocked.'
     }
-    Write-Host 'Build marker: 0.7.6-Beta' -ForegroundColor Green
+    Write-Host 'Build marker: 0.7.7-Beta' -ForegroundColor Green
     Write-Host ('Verified installed EXE SHA256: ' + $actualHash) -ForegroundColor Green
     Write-Host ('Installed: ' + $installedExe) -ForegroundColor Green
 

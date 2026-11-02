@@ -1,6 +1,8 @@
-"""NotabilityEditor 0.7.6-Beta - local note viewer and ink editor."""
+"""NotabilityEditor 0.7.7-Beta - local note viewer and ink editor."""
 # Release channel: relese. Same-base relese outranks every internal vN.
-from infrastructure import nv_ai_runtime  # Initialize CPU runtime before Qt DLLs.
+# Compatibility revision: 2026-10-29 (native paper ranges and shapes).
+# Seamless pages: 2026-10-29, cross-page drawing and erasure.
+from infrastructure import ne_ai_runtime  # Initialize CPU runtime before Qt DLLs.
 import sys
 import threading
 import os
@@ -13,40 +15,42 @@ from PyQt6.QtGui import QAction, QKeySequence, QActionGroup, QIcon, QPixmap, QCo
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtSvgWidgets import QSvgWidget
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QDialog, QFileDialog, QLabel, QScrollArea,
-                             QMessageBox, QProgressDialog, QSpinBox, QPushButton, QSlider, QDoubleSpinBox, QComboBox, QWidget, QSizePolicy, QVBoxLayout, QHBoxLayout)
-from formats.nv_loader import prepare_note, LoadCancelled
-from infrastructure.nv_diagnostics import (install as install_diagnostics, stage as diagnostic_stage,
+                             QMessageBox, QProgressDialog, QProgressBar, QSpinBox, QPushButton, QSlider, QDoubleSpinBox, QComboBox, QWidget, QSizePolicy, QVBoxLayout, QHBoxLayout, QMenu)
+from formats.ne_loader import prepare_note, LoadCancelled
+from infrastructure.ne_diagnostics import (install as install_diagnostics, stage as diagnostic_stage,
                             exception as diagnostic_exception, warning as diagnostic_warning,
                             log_directory)
-from core.nv_filetypes import file_action
-from import_export.nv_pdfimport import pdf_to_ntb, PdfImportCancelled
-from import_export.nv_importdraft import ImportDraft
-from rendering.nv_pdfview import PdfNoteCanvas
-from editing.nv_edits import COLORS
-from formats.nv_native import write_ntb
-from platform_integration.nv_windows import icon_path,set_app_identity
-from ui.nv_defaults import DefaultAppsDialog
-from ui.nv_toolbar import EditorPanel,ReadingPanel,tool_icon
-from ui.nv_colors import CustomColorDialog
-from ui.nv_menus import build_menus,refresh_menu_state,refresh_recent_menu,apply_selection_preferences
-from ui.nv_sidebar import PageSidebar
-from pages.nv_page_access import grant_page_access
-from import_export.nv_export import write_pdf, ExportCancelled
-from import_export.nv_noteexport import export_note
-from ui.nv_style import APP_STYLE
-from ui.nv_ui import prepare_progress
-from ui.nv_save_notice import show_copyable_path_notice
-from ui.nv_unsaved_dialog import (
+from core.ne_filetypes import file_action
+from import_export.ne_pdfimport import pdf_to_ntb, PdfImportCancelled
+from import_export.ne_importdraft import ImportDraft
+from rendering.ne_pdfview import PdfNoteCanvas
+from editing.ne_edits import COLORS
+from formats.ne_native import write_ntb
+from platform_integration.ne_windows import icon_path,set_app_identity
+from ui.ne_defaults import DefaultAppsDialog
+from ui.ne_toolbar import EditorPanel,ReadingPanel,tool_icon
+from ui.ne_colors import CustomColorDialog
+from ui.ne_menus import build_menus,refresh_menu_state,refresh_recent_menu,apply_selection_preferences
+from ui.ne_sidebar import PageSidebar
+from pages.ne_page_access import grant_page_access
+from import_export.ne_export import write_pdf, ExportCancelled
+from import_export.ne_noteexport import export_note
+from ui.ne_style import APP_STYLE,style_menu
+from ui.ne_ui import prepare_progress
+from ui.ne_save_notice import show_copyable_path_notice
+from ui.ne_unsaved_dialog import (
     CHOICE_DISCARD, CHOICE_SAVE, show_unsaved_changes_dialog,
 )
-from images.nv_inserted_images import rewrite_archive
-from ui.nv_shortcuts import ShortcutManager
-from platform_integration.nv_userdata import migrate_user_data
+from images.ne_inserted_images import rewrite_archive
+from ui.ne_shortcuts import ShortcutManager
+from platform_integration.ne_userdata import migrate_user_data
+from editing.ne_save_session import SaveSession, SnapshotWorker, capture as capture_save, file_stamp
 
 
 class LoadWorker(QThread):
     progress = pyqtSignal(int,str)
     ready = pyqtSignal(object)
+    page_access_ready = pyqtSignal(object)
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
 
@@ -54,15 +58,40 @@ class LoadWorker(QThread):
         super().__init__(parent)
         self.path = path
         self.stop = threading.Event()
+        self.page_access_gate = threading.Event()
 
     def run(self):
         try:
             result = prepare_note(self.path,self.progress.emit,self.stop.is_set)
+            if not self.stop.is_set() and result.archive_path:
+                self.progress.emit(98,'正在准备页面显示索引…')
+                from rendering.ne_canvas_index import prepare_canvas_index
+                try:result.render_index=prepare_canvas_index(result.svg,result.height,self.stop.is_set)
+                except BaseException:
+                    result.cleanup()
+                    raise
             if self.stop.is_set():
                 result.cleanup()
                 self.cancelled.emit()
             else:
+                index=result.render_index
+                result.page_access_pending=bool(result.bundle_data and index and index.page_count is not None
+                                                and result.path.lower().endswith('.ntb'))
                 self.ready.emit(result)
+                if result.page_access_pending and not self.stop.is_set():
+                    # Let the first visible raster use CPU/GIL first. The
+                    # bounded fallback also supports opens in a hidden window.
+                    for _ in range(40):
+                        if self.stop.is_set() or self.page_access_gate.wait(.05):break
+                    if self.stop.is_set():return
+                    from pages.ne_page_access import inspect_page_access,PageAccess
+                    try:access=inspect_page_access(result.bundle_data,result.path,index.page_count)
+                    except Exception as exc:
+                        diagnostic_exception('background page capability check',exc)
+                        access=PageAccess(reason='页面结构校验失败：'+str(exc))
+                    result.page_access_result=(result.bundle_data,index.page_count,access)
+                    result.page_access_pending=False
+                    if not self.stop.is_set():self.page_access_ready.emit(result)
         except LoadCancelled:
             self.cancelled.emit()
         except Exception as exc:
@@ -96,7 +125,8 @@ class SaveWorker(QThread):
     progress = pyqtSignal(int)
     ready = pyqtSignal(str,object)
     failed = pyqtSignal(str)
-    def __init__(self,source,target,hidden,added,thumbnail,base_bundle,expected_bundle,parent=None,page_plan=None,image_payload=None,native_image_changes=None,native_image_lock_changes=None,native_image_deletions=None,native_image_layer_changes=None):
+    baseline_ready = pyqtSignal(str)
+    def __init__(self,source,target,hidden,added,thumbnail,base_bundle,expected_bundle,parent=None,page_plan=None,image_payload=None,native_image_changes=None,native_image_lock_changes=None,native_image_deletions=None,native_image_layer_changes=None,session=None,snapshot=None,expected_stamp=None):
         super().__init__(parent)
         self.source,self.target,self.hidden,self.added,self.thumbnail=source,target,hidden,added,thumbnail
         self.base_bundle,self.expected_bundle=base_bundle,expected_bundle
@@ -107,8 +137,31 @@ class SaveWorker(QThread):
         self.native_image_lock_changes=native_image_lock_changes or {}
         self.native_image_deletions=native_image_deletions or set()
         self.native_image_layer_changes=native_image_layer_changes or {}
+        self.session,self.snapshot=session,snapshot
+        self.disk_source=source
+        self.expected_stamp=expected_stamp
+        self.target_stamp=file_stamp(target)
+        self.committed_stamp=None
+    def check_source(self):
+        from zipfile import ZipFile
+        if self.expected_stamp is not None and file_stamp(self.disk_source)!=self.expected_stamp:
+            raise ValueError('文件已被外部修改，已停止替换；当前编辑仍保留。')
+        if self.expected_bundle is not None:
+            with ZipFile(self.disk_source) as current:
+                if current.read('noteBundle')!=self.expected_bundle:
+                    raise ValueError('保存期间文件被其他程序修改，已停止替换；当前编辑仍保留。')
     def _write(self,target):
-        if self.image_payload is None:
+        if self.session:
+            from core.ne_save_work import session_validation
+            with session_validation(self.session.validation_cache):
+                return self._write_indexed(target)
+        return self._write_indexed(target)
+
+    def _write_indexed(self,target):
+        self.check_source()
+        source=self.session.ensure_baseline(self.stop.is_set) if self.session else self.source
+        expected=self.base_bundle if self.session else self.expected_bundle
+        if self.image_payload is None and not self.session:
             return write_ntb(self.source,target,self.hidden,self.added,self.progress.emit,
                              self.stop.is_set,self.thumbnail,base_bundle=self.base_bundle,
                              expected_bundle=self.expected_bundle,page_plan=self.page_plan,
@@ -117,25 +170,39 @@ class SaveWorker(QThread):
                              native_image_deletions=self.native_image_deletions,native_image_layer_changes=self.native_image_layer_changes)
         # Two-phase atomic save. Rebuild native NTB in a private scratch file,
         # then pack viewer images before committing ONCE to the requested path.
-        fd,stage=tempfile.mkstemp(prefix='.nv-native-',suffix='.ntb',dir=Path(target).parent)
+        fd,stage=tempfile.mkstemp(prefix='.ne-native-',suffix='.ntb',dir=Path(target).parent)
         os.close(fd)
         try:
-            bundle=write_ntb(self.source,stage,self.hidden,self.added,self.progress.emit,
+            bundle=write_ntb(source,stage,self.hidden,self.added,self.progress.emit,
                              self.stop.is_set,self.thumbnail,base_bundle=self.base_bundle,
-                             expected_bundle=self.expected_bundle,page_plan=self.page_plan,
-                             effective_target=target,native_image_changes=self.native_image_changes,
+                             expected_bundle=expected,page_plan=self.page_plan,
+                             effective_target=target,effective_source=self.session.source if self.session else None,
+                             native_image_changes=self.native_image_changes,
                              native_image_lock_changes=self.native_image_lock_changes,
                              native_image_deletions=self.native_image_deletions,native_image_layer_changes=self.native_image_layer_changes)
             if self.stop.is_set():raise LoadCancelled()
-            pages,assets=self.image_payload
+            pages,assets=self.image_payload or ([],{})
             def check_source():
                 # Packing Viewer images can take time after the native writer
                 # checked the source. Recheck immediately before final commit.
-                if self.expected_bundle is not None:
-                    from zipfile import ZipFile
-                    with ZipFile(self.source) as current:
-                        if current.read('noteBundle')!=self.expected_bundle:
-                            raise ValueError('保存期间文件被其他程序修改，已停止替换；当前编辑仍保留。')
+                self.check_source()
+                # Save As must not overwrite a destination changed after the
+                # user chose it. The recovery fallback always uses a new path.
+                expected_target=self.target_stamp if Path(target)==Path(self.target) else None
+                if file_stamp(target)!=expected_target:
+                    raise ValueError('目标文件在保存期间发生变化，已停止替换；当前编辑仍保留。')
+            from zipfile import ZipFile
+            from images.ne_inserted_images import PREFIX,_validate_page
+            for page in pages:_validate_page(page)
+            with ZipFile(stage) as staged:
+                needs_images=bool(assets or any(page['images'] for page in pages)
+                                  or any(name.startswith(PREFIX) for name in staged.namelist()))
+            if not needs_images:
+                if self.stop.is_set():raise LoadCancelled()
+                check_source()
+                from core.ne_safecommit import replace_with_retry
+                replace_with_retry(stage,target)
+                return bundle
             bundle=rewrite_archive(stage,target,pages,assets,cancelled=self.stop.is_set,before_commit=check_source,native=True)
             return bundle
         finally:
@@ -143,7 +210,16 @@ class SaveWorker(QThread):
             except FileNotFoundError:pass
     def run(self):
         try:
+            if self.snapshot is not None:
+                from document_core import thaw
+                values=thaw(self.snapshot.data)
+                for name,value in values.items():setattr(self,name,value)
+            if self.session and self.snapshot:
+                self.baseline_ready.emit(self.session.ensure_baseline(self.stop.is_set))
+                self.session.persist(self.snapshot,self.target,self.stop.is_set)
             bundle=self._write(self.target)
+            self.committed_stamp=file_stamp(self.target)
+            self.acknowledge_snapshot()
             self.succeeded=True;self.ready.emit(self.target,bundle)
         except LoadCancelled:
             pass
@@ -165,6 +241,8 @@ class SaveWorker(QThread):
                     raise RuntimeError('无法分配新的恢复文件名')
                 bundle=self._write(str(fallback))
                 self.target=str(fallback)
+                self.committed_stamp=file_stamp(self.target)
+                self.acknowledge_snapshot()
                 self.succeeded=True
                 self.ready.emit(self.target,bundle)
             except LoadCancelled:
@@ -173,6 +251,14 @@ class SaveWorker(QThread):
                 self.failed.emit('原文件被 Windows 拒绝覆盖；安全副本保存也失败。\n原文件未修改，编辑仍保留。\n'+str(recovery_error))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+    def acknowledge_snapshot(self):
+        # NTB replacement is already committed. Failure to remove an obsolete
+        # recovery file must not be reported as a failed NTB save or trigger a
+        # second write to a fallback destination.
+        if self.session and self.snapshot:
+            try:self.session.saved(self.snapshot.revision)
+            except OSError as exc:diagnostic_exception('acknowledge saved recovery snapshot',exc)
 
 
 class Viewer(QMainWindow):
@@ -188,7 +274,15 @@ class Viewer(QMainWindow):
         self._active_new_note_draft = None
         self.disk_bundle = None
         self.after_save = None
-        self._reload_saved_path = None
+        self._save_queued = False
+        self.save_session = None
+        self.snapshot_worker = None
+        self._edit_revision = 0
+        self.disk_stamp = None
+        self._snapshot_timer = QTimer(self)
+        self._snapshot_timer.setSingleShot(True)
+        self._snapshot_timer.setInterval(2000)
+        self._snapshot_timer.timeout.connect(self.persist_recovery_snapshot)
         self._save_notice = None
         self._image_compat_notice_shown=False
         self._page_history_path = None
@@ -196,7 +290,7 @@ class Viewer(QMainWindow):
         self._restoring_page = False
         self.zoom = 1.0
         self.fit_width = False
-        self.setWindowTitle('NotabilityEditor 0.7.6-Beta')
+        self.setWindowTitle('NotabilityEditor 0.7.7-Beta')
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1100,800)
         self.setMinimumSize(720,400)
@@ -205,56 +299,15 @@ class Viewer(QMainWindow):
         self.scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.scroll.setStyleSheet('QScrollArea { background: #42464d; border: 0; }')
         self.setCentralWidget(self.scroll)
-        from rendering.nv_gpuview import GpuViewport
+        from rendering.ne_gpuview import GpuViewport
         self.gpu_settings=QSettings('NotabilityEditor','Display')
         gpu_enabled=self.gpu_settings.value('gpu_acceleration',True,type=bool)
         override=os.environ.get('NV_GPU_MODE','').lower()
         if override in ('off','on'):gpu_enabled=override=='on'
         self.gpu=GpuViewport(self.scroll,gpu_enabled,self)
         self.gpu.changed.connect(self.gpu_state_changed)
-        # A proper empty state makes the first launch discoverable. The loaded
-        # document later switches the scroll area back to fixed-size canvas mode.
-        welcome = QWidget()
-        welcome.setObjectName('welcomeScreen')
-        welcome.setStyleSheet("""
-            QWidget#welcomeScreen { background:#f3f6fb; }
-            QLabel#welcomeTitle { color:#0f172a; font-size:24px; font-weight:700; }
-            QLabel#welcomeHint { color:#64748b; font-size:14px; }
-            QPushButton#welcomeOpen { background:#2563eb; color:white; border:1px solid #2563eb;
-                border-radius:10px; font-weight:600; font-size:14px; padding:11px 26px; }
-            QPushButton#welcomeOpen:hover { background:#1d4ed8; }
-            QPushButton#welcomeImport { background:#ffffff; color:#2563eb; border:1px solid #93b4f5;
-                border-radius:10px; font-weight:600; font-size:14px; padding:11px 26px; }
-            QPushButton#welcomeImport:hover { background:#eaf1ff; }
-        """)
-        welcome_layout=QVBoxLayout(welcome)
-        welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_layout.setSpacing(16)
-        logo=QLabel();logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setPixmap(QIcon(str(icon_path())).pixmap(64,64));welcome_layout.addWidget(logo)
-        title=QLabel('打开笔记，继续记录')
-        title.setObjectName('welcomeTitle');title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_layout.addWidget(title)
-        hint=QLabel('打开 NTB / NOTE 笔记，或导入 PDF 创建可编辑 NTB\n导入不会修改原 PDF 文件')
-        hint.setObjectName('welcomeHint');hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_layout.addWidget(hint)
-        welcome_buttons=QHBoxLayout()
-        welcome_buttons.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        welcome_buttons.setSpacing(12)
-        welcome_open=QPushButton('打开笔记')
-        welcome_open.setObjectName('welcomeOpen');welcome_open.clicked.connect(self.choose_file)
-        welcome_open.setMinimumWidth(160)
-        welcome_buttons.addWidget(welcome_open)
-        welcome_import=QPushButton('导入 PDF')
-        welcome_import.setObjectName('welcomeImport');welcome_import.clicked.connect(self.import_pdf_as_ntb)
-        welcome_import.setMinimumWidth(160)
-        welcome_buttons.addWidget(welcome_import)
-        welcome_layout.addLayout(welcome_buttons)
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setWidget(welcome)
         self._install_drop_target(self.scroll)
         self._install_drop_target(self.scroll.viewport())
-        self._install_drop_target(welcome)
         self.read_toolbar=self.addToolBar('阅读工具');self.read_toolbar.setMovable(False)
         self.read_toolbar.setStyleSheet('QToolBar { background:#ffffff; border:0; spacing:0; padding:0; }')
         self.reading_panel=ReadingPanel(self);self.read_toolbar.addWidget(self.reading_panel)
@@ -286,12 +339,17 @@ class Viewer(QMainWindow):
         self._reading_page_sync_timer.setSingleShot(True)
         self._reading_page_sync_timer.setInterval(32)
         self._reading_page_sync_timer.timeout.connect(self._flush_reading_page_sync)
-        self.ink_smooth_action=self.action(self,'平滑笔迹（显示与 PDF 导出）',self.toggle_ink_smoothing)
-        self.ink_smooth_action.setCheckable(True)
-        self.ink_smooth_action.setChecked(self.color_settings.value('view/ink_smoothing',True,type=bool))
-        self.ink_smooth_action.setToolTip('只平滑渲染轨迹，不修改 NTB 原始笔迹；取消勾选可对照原样')
+        self.sampling_precision_action=self.action(self,'采样精度…',self.configure_sampling_precision)
+        self.sampling_precision_action.setToolTip('设置新笔迹的最小采样间距；数值越小，保留的细节越多')
+        self.smart_interpolation_action=self.action(self,'智能插点',self.toggle_smart_interpolation)
+        self.smart_interpolation_action.setCheckable(True)
+        self.smart_interpolation_action.setChecked(
+            self.color_settings.value('draw/smart_interpolation',True,type=bool))
+        self.smart_interpolation_action.setToolTip('开启时对新笔迹使用向心三次曲线；关闭时使用原有曲线，旧笔迹保持不变')
         self.build_edit_toolbar()
         build_menus(self)
+        self.reading_panel.new_note_button.setDefaultAction(self.new_note_action)
+        self.reading_panel.new_note_button.setText('新建笔记')
         self.reading_panel.bind_export_actions(self)
         self.reading_panel.pdf_note_button.setDefaultAction(self.pdf_note_action)
         self.reading_panel.pdf_note_button.setText('导入 PDF')
@@ -303,20 +361,36 @@ class Viewer(QMainWindow):
         self._install_drop_target(self.page_sidebar)
         self._install_drop_target(self.page_sidebar.list.viewport())
         self.resizeDocks([self.page_sidebar],[280],Qt.Orientation.Horizontal)
-        self.menus['页面']=self.page_sidebar.menu;self.page_sidebar.menu.setTitle('页面')
-        self.menuBar().insertMenu(self.menus['视图'].menuAction(),self.page_sidebar.menu)
+        self.menus['页面']=QMenu('页面',self);style_menu(self.menus['页面'])
+        self.seamless_pages_action=self.action(self,'页面无缝衔接（支持跨页绘制）',self.toggle_seamless_pages)
+        self.seamless_pages_action.setCheckable(True)
+        self.seamless_pages_action.setChecked(self.color_settings.value('view/seamless_pages',False,type=bool))
+        self.seamless_pages_action.setToolTip('去除页间空隙；画笔、荧光笔和橡皮擦可连续跨页，一次操作可一次撤销')
+        self.menus['页面'].addAction(self.seamless_pages_action)
+        self.menus['页面'].addSeparator()
+        self.menus['页面'].addActions(self.page_sidebar.menu.actions())
+        self.menus['页面'].aboutToShow.connect(self.page_sidebar.refresh)
+        self.seamless_pages_action.setEnabled(False)
+        self.menuBar().insertMenu(self.menus['视图'].menuAction(),self.menus['页面'])
         self.page_toggle_action=self.page_sidebar.toggleViewAction()
         self.page_toggle_action.setText('页面管理');self.page_toggle_action.setIcon(tool_icon('pages'))
         self.page_toggle_action.setIconVisibleInMenu(False);self.page_toggle_action.setShortcut(QKeySequence('Ctrl+Shift+P'))
         self.editor_panel.page_button.setDefaultAction(self.page_toggle_action)
         self.addAction(self.page_toggle_action)
+        from ui.ne_editor_view import EditorView
+        self.editor_view=EditorView(self)
         self.shortcut_manager=ShortcutManager(self)
         self.shortcut_manager.apply()
         self.page_sidebar.visibilityChanged.connect(self.page_sidebar_visibility_changed)
         self.page_sidebar_visibility_changed(not self.page_sidebar.isHidden())
         self.menus['视图'].addSeparator();self.menus['视图'].addAction(self.page_toggle_action)
         refresh_menu_state(self)
-        self.statusBar().showMessage('PDF 导入支持 1～5000 页及混合尺寸；NTB 阅读、笔迹编辑和保存不受此导入页数限制' )
+        from ui.ne_workspace import DesktopWorkspace
+        self.workspace = DesktopWorkspace(self)
+        recovery_action=self.action(self,'恢复未保存的笔记…',self.recover_unsaved_note)
+        self.menus['文件'].addAction(recovery_action)
+        refresh_menu_state(self)
+        QTimer.singleShot(0,self.offer_recovery)
 
     def show_default_settings(self):
         DefaultAppsDialog(self).exec()
@@ -340,6 +414,9 @@ class Viewer(QMainWindow):
             self.canvas.highlight_color=self.current_highlight_color
             self.canvas.highlight_width=self.highlight_size.value()
             self.canvas.highlight_opacity=self.highlight_opacity.value()/100.0
+            self.canvas.tape_color=self.current_tape_color
+            self.canvas.tape_width=self.tape_size.value()
+            self.canvas.tape_pattern=self.current_tape_pattern
             self.canvas.eraser_width=self.erase_size.value()
             self.canvas.eraser_mode='partial' if self.erase_mode.currentIndex()==0 else 'stroke'
             self.canvas._syncBrushCursor()
@@ -351,8 +428,8 @@ class Viewer(QMainWindow):
 
     def _page_history_target(self,path,*,allow_draft=False):
         from pathlib import Path
-        from settings.nv_page_history import history_enabled
-        from settings.nv_recent_files import canonical_path
+        from settings.ne_page_history import history_enabled
+        from settings.ne_recent_files import canonical_path
         if not history_enabled() or not path:
             return None
         if not allow_draft and self._is_unsaved_draft():
@@ -369,7 +446,7 @@ class Viewer(QMainWindow):
                 or self._restoring_page or not self.canvas):
             return False
         try:
-            from settings.nv_page_history import remember_last_position
+            from settings.ne_page_history import remember_last_position
             vertical=0.0;horizontal=0.0
             if hasattr(self,'scroll'):
                 vbar=self.scroll.verticalScrollBar()
@@ -417,7 +494,7 @@ class Viewer(QMainWindow):
         target=self._page_history_target(path)
         if target is None:return None,None
         try:
-            from settings.nv_page_history import last_position_for
+            from settings.ne_page_history import last_position_for
             position=last_position_for(self.color_settings,target)
         except (OSError,TypeError,ValueError) as exc:
             diagnostic_exception("read page history",exc)
@@ -517,7 +594,7 @@ class Viewer(QMainWindow):
         self.select_tool(tool)
 
     def select_tool(self,tool):
-        if self.pdf_importer or self.saver or self.worker:return
+        if self.pdf_importer or self.worker:return
         if not hasattr(self.canvas,'setEditTool'):return
         if not self.tools[tool].isEnabled():return
         if tool!='read' and not self.ink.isChecked():
@@ -531,10 +608,11 @@ class Viewer(QMainWindow):
         if tool=='erase':self.statusBar().showMessage('橡皮擦仅擦除笔迹 · 可拖动连续擦除 · Ctrl+Z 撤销 · Esc 取消当前操作')
         if tool=='draw':self.statusBar().showMessage('画笔：移入页面可预览笔尖 · 宽度 0.1～128 · Ctrl+Z 撤销')
         if tool=='highlight':self.statusBar().showMessage('荧光笔：移入页面可预览半透明笔尖 · 宽度 0.1～256 · Ctrl+Z 撤销')
+        if tool=='tape':self.statusBar().showMessage('遮字胶带：拖动遮盖内容 · Ctrl+Shift+T 临时揭开/恢复 · 选择工具移动 · 橡皮擦移除')
 
     def insert_image(self):
         if (not self.prepared or not hasattr(self.canvas,'image_layers') or
-                not self.prepared.path.lower().endswith('.ntb') or self.worker or self.saver):return
+                not self.prepared.path.lower().endswith('.ntb') or self.worker):return
         source,_=QFileDialog.getOpenFileName(self,'选择要插入的图片','','图片 (*.png *.jpg *.jpeg *.webp *.bmp)')
         if not source:return
         if not self._image_compat_notice_shown:
@@ -644,13 +722,102 @@ class Viewer(QMainWindow):
 
     def edit_changed(self):
         refresh_menu_state(self)
-        if hasattr(self,'page_sidebar'):self.page_sidebar.invalidate()
+        if hasattr(self,'page_sidebar'):self.page_sidebar.invalidate(ink_change=True)
         model=self.canvas.edits if hasattr(self.canvas,'edits') else None
-        editable=bool(self.prepared and self.prepared.path.lower().endswith('.ntb') and not self.saver and not self.worker and not self.pdf_importer)
+        editable=bool(self.prepared and self.prepared.path.lower().endswith('.ntb') and not self.worker and not self.pdf_importer)
         self.undo_action.setEnabled(bool(editable and model and model.can_undo))
         self.redo_action.setEnabled(bool(editable and model and model.can_redo))
+        self._edit_revision+=1
+        if editable and self.save_session and self._has_unsaved_changes() and not self._snapshot_timer.isActive():
+            self._snapshot_timer.start()
         # Keep the window title fixed to the app name and version.
         # File information remains available in the status bar and page panel.
+
+    def _has_unsaved_changes(self):
+        canvas=self.canvas
+        return bool(canvas and hasattr(canvas,'edits') and
+                    (canvas.edits.dirty or canvas.image_layers.dirty or
+                     canvas.official_image_edits.dirty or
+                     (self._is_unsaved_draft() and not self._unsaved_draft_is_empty())))
+
+    def persist_recovery_snapshot(self):
+        if not self.save_session or not self._has_unsaved_changes():return
+        if self.snapshot_worker or getattr(self.canvas.edits,'pending',None):
+            self._snapshot_timer.start();return
+        try:
+            snapshot=capture_save(self.canvas,self._edit_revision)
+        except Exception as exc:
+            diagnostic_exception('capture recovery snapshot',exc)
+            self.statusBar().showMessage('本地恢复快照未完成，编辑仍保留：'+str(exc),6000)
+            return
+        worker=SnapshotWorker(self.save_session,snapshot,self.prepared.path,self)
+        self.snapshot_worker=worker
+        worker.baseline_ready.connect(self.use_save_baseline)
+        worker.failed.connect(lambda message:self.statusBar().showMessage('本地恢复快照未完成：'+message,6000))
+        def finished():
+            if self.snapshot_worker is worker:self.snapshot_worker=None
+            worker.deleteLater()
+            if self.save_session and self._has_unsaved_changes() and self._edit_revision>snapshot.revision:
+                self._snapshot_timer.start()
+        worker.finished.connect(finished)
+        worker.start()
+
+    def use_save_baseline(self,path):
+        if self.save_session and str(self.save_session.baseline)==path and self.prepared:
+            self.prepared.archive_path=path
+            self.canvas.archive_path=path
+
+    def offer_recovery(self):
+        from editing.ne_save_session import pending_recoveries
+        if pending_recoveries() and not self.worker and not self.prepared:
+            choice=QMessageBox.question(self,'发现未保存的笔记',
+                '上次编辑留下了本地恢复快照。是否恢复为新的 NTB？原文件保持不变。',
+                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if choice==QMessageBox.StandardButton.Yes:self.recover_unsaved_note()
+
+    def recover_unsaved_note(self):
+        from editing.ne_save_session import pending_recoveries,read_recovery
+        from PyQt6.QtWidgets import QInputDialog
+        if self.workspace.busy():return
+        entries=pending_recoveries()
+        if not entries:
+            QMessageBox.information(self,'恢复笔记','没有待恢复的本地快照。');return
+        labels=[f"{Path(payload['target']).name} · {payload['updated']} · {folder.name[:8]}" for folder,payload in entries]
+        selected,ok=QInputDialog.getItem(self,'恢复笔记','选择未保存的笔记',labels,0,False)
+        if not ok:return
+        folder,payload=entries[labels.index(selected)]
+        default=str(Path(payload['target']).with_name(Path(payload['target']).stem+'-恢复.ntb'))
+        target,_=QFileDialog.getSaveFileName(self,'恢复为新的 NTB',default,'Notability Bundle (*.ntb)')
+        if not target:return
+        if not target.lower().endswith('.ntb'):target+='.ntb'
+        if Path(target).exists():
+            QMessageBox.warning(self,'请选择新文件','恢复必须保存到新的文件，避免覆盖现有笔记。');return
+        if not self.confirm_leave(lambda:self.recover_unsaved_note()):return
+        try:
+            data=read_recovery(folder)
+            from zipfile import ZipFile
+            source=str(folder/'baseline.ntb')
+            with ZipFile(source) as archive:bundle=archive.read('noteBundle')
+        except Exception as exc:
+            QMessageBox.warning(self,'恢复失败','快照已保留：'+str(exc));return
+        self.save_progress=prepare_progress(QProgressDialog('正在恢复 NTB…','取消',0,100,self),'恢复笔记')
+        self.save_progress.setWindowModality(Qt.WindowModality.NonModal)
+        worker=SaveWorker(source,target,base_bundle=bundle,expected_bundle=bundle,parent=self,**data)
+        self.saver=worker
+        worker.progress.connect(self.save_progress.setValue)
+        worker.failed.connect(lambda message:QMessageBox.warning(self,'恢复失败，快照已保留',message))
+        self.save_progress.canceled.connect(worker.stop.set)
+        worker.ready.connect(lambda path,bundle:self.statusBar().showMessage('恢复副本已保存：'+path))
+        def finished():
+            success=worker.succeeded
+            self.save_progress.close();worker.deleteLater();self.saver=None
+            refresh_menu_state(self)
+            if success:
+                self._recovery_to_clear=(folder,str(Path(target).resolve()))
+                QTimer.singleShot(0,lambda:self.open_file(target))
+        worker.finished.connect(finished)
+        refresh_menu_state(self);worker.start()
 
     def _is_unsaved_pdf_draft(self):
         draft=getattr(self,'_active_pdf_draft',None)
@@ -731,7 +898,13 @@ class Viewer(QMainWindow):
         return False
 
     def save_ntb(self,after=None,save_as=False):
-        if self.saver or self.worker or self.pdf_importer or not self.prepared or not self.prepared.path.lower().endswith('.ntb'):return
+        if self.saver:
+            if not save_as:
+                self._save_queued = True
+                if after:self.after_save = after
+                self.statusBar().showMessage('正在后台保存，最新修改将在本次完成后继续保存…')
+            return
+        if self.worker or self.pdf_importer or not self.prepared or not self.prepared.path.lower().endswith('.ntb'):return
         self.canvas.finishGesture()
         draft=self._active_unsaved_draft()
         first_save=draft is not None
@@ -741,18 +914,33 @@ class Viewer(QMainWindow):
             self.statusBar().showMessage('当前文件已保存，没有新的修改')
             if after:
                 QTimer.singleShot(0,after)
-            else:
-                QMessageBox.information(self,'无需保存','当前文件已是最新版本，没有需要保存的修改。')
             return
         target=self.prepared.path
         if first_save or save_as:
+            library_folder = None
             default=(str(draft.suggested_path) if first_save else
                      str(Path(target).with_name(Path(target).stem+'-副本.ntb')))
+            if first_save and hasattr(self, 'workspace'):
+                from ui.home.library import category_directory
+                import uuid
+                folder = category_directory() / ('note-' + uuid.uuid4().hex)
+                try:
+                    folder.mkdir(parents=True, exist_ok=False)
+                except OSError as exc:
+                    QMessageBox.warning(self, '无法创建笔记存储目录', str(exc))
+                    return
+                default = str(folder / Path(default).name)
+                library_folder = folder
             dialog_title=(
                 '保存新建笔记为 NTB' if first_save and getattr(draft,'kind',None)=='new'
                 else '首次保存 PDF 笔记为 NTB' if first_save
                 else '另存为 NTB')
             target,_=QFileDialog.getSaveFileName(self,dialog_title,default,'Notability Bundle (*.ntb)')
+            if library_folder and (not target or Path(target).parent.resolve() != library_folder.resolve()):
+                try:
+                    library_folder.rmdir()
+                except OSError:
+                    pass
             if not target:return
             if not target.lower().endswith('.ntb'):target+='.ntb'
             if first_save and Path(target).resolve()==Path(self.prepared.path).resolve():
@@ -785,17 +973,9 @@ class Viewer(QMainWindow):
                 QMessageBox.StandardButton.No)
             if choice!=QMessageBox.StandardButton.Yes:return
         try:
-            hidden,added=self.canvas.edits.native_changes()
-            thumbnail=self.canvas.thumbnailBytes()
-            keys=(list(self.canvas.edits.order) if hasattr(self.canvas.edits,'order')
-                  else list(range(self.canvas.page_count)))
-            layer_pages=self.canvas.image_layers.serialize(keys)
-            image_payload=(layer_pages,self.canvas.image_layers.referenced_assets(layer_pages))
-            native_image_changes=self.canvas.official_image_edits.changes
-            native_image_lock_changes=self.canvas.official_image_edits.lock_changes
-            native_image_deletions=self.canvas.official_image_edits.deletion_changes
-            native_image_layer_changes=self.canvas.official_image_edits.layer_changes
-            if ((native_image_changes or native_image_lock_changes or native_image_deletions or native_image_layer_changes)
+            snapshot=capture_save(self.canvas,self._edit_revision,self.canvas.thumbnailBytes())
+            data=snapshot.data
+            if ((data['native_image_changes'] or data['native_image_lock_changes'] or data['native_image_deletions'] or data['native_image_layer_changes'])
                     and plan is not None and self.canvas.page_edit_kind!='native_per_page'):
                 raise ValueError('此分组笔记的图片修改与页面调整需分次保存。当前编辑仍保留。')
         except Exception as exc:
@@ -805,18 +985,27 @@ class Viewer(QMainWindow):
         # Only an explicit Save As (or first PDF draft save) should display a path.
         self._save_request_show_path=bool(save_as or first_save)
         self.save_progress=prepare_progress(QProgressDialog('正在写入并校验 NTB…','取消',0,100,self),'正在保存笔记')
-        self.save_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self.save_progress.setMinimumDuration(0);self.save_progress.setAutoClose(False)
-        self.saver=SaveWorker(self.prepared.path,target,hidden,added,thumbnail,self.prepared.bundle_data,self.disk_bundle,self,page_plan=plan,image_payload=image_payload,
-                              native_image_changes=native_image_changes,
-                              native_image_lock_changes=native_image_lock_changes,
-                              native_image_deletions=native_image_deletions,native_image_layer_changes=native_image_layer_changes)
+        self.save_progress.setWindowModality(Qt.WindowModality.NonModal)
+        self.save_progress.setMinimumDuration(2147483647);self.save_progress.setAutoClose(False)
+        self._save_status=QWidget(self)
+        status_layout=QHBoxLayout(self._save_status);status_layout.setContentsMargins(0,0,0,0)
+        status_progress=QProgressBar();status_progress.setRange(0,100);status_progress.setFixedWidth(110)
+        cancel_save=QPushButton('取消保存');cancel_save.setFlat(True)
+        status_layout.addWidget(status_progress);status_layout.addWidget(cancel_save)
+        self.statusBar().addPermanentWidget(self._save_status)
+        self.saver=SaveWorker(self.prepared.path,target,base_bundle=self.prepared.bundle_data,
+                              expected_bundle=self.disk_bundle,parent=self,session=self.save_session,
+                              snapshot=snapshot,expected_stamp=self.disk_stamp,**data)
         self.saver.progress.connect(self.save_progress.setValue)
+        self.saver.progress.connect(status_progress.setValue)
+        self.saver.baseline_ready.connect(self.use_save_baseline)
         self.saver.ready.connect(self.saved_native)
         self.saver.failed.connect(lambda message:QMessageBox.warning(self,'保存失败，编辑内容仍保留',message))
         self.saver.finished.connect(self.save_finished)
         self.save_progress.canceled.connect(self.saver.stop.set)
-        self.edit_toolbar.setEnabled(False);self.open_action.setEnabled(False);self.canvas.setEnabled(False);self.canvas.setUpdatesEnabled(False)
+        cancel_save.clicked.connect(self.saver.stop.set)
+        self.open_action.setEnabled(False)
+        self.statusBar().showMessage('正在后台保存，可继续编辑…')
         refresh_menu_state(self)
         self.saver.start()
 
@@ -824,10 +1013,15 @@ class Viewer(QMainWindow):
         remember=getattr(self,'_remember_current_page',None)
         if remember:remember()
         previous_path=self.prepared.path
-        self.prepared.path=path;self.prepared.archive_path=path;self.canvas.archive_path=path
-        self.disk_bundle=bundle;self.canvas.edits.mark_saved()
-        self.canvas.image_layers.mark_saved()
-        self.canvas.official_image_edits.mark_saved()
+        self.prepared.path=path
+        baseline=str(self.save_session.baseline)
+        self.prepared.archive_path=baseline;self.canvas.archive_path=baseline
+        self.disk_bundle=bundle;self.disk_stamp=self.saver.committed_stamp
+        snapshot=self.saver.snapshot
+        core=getattr(self.canvas.edits,'core',self.canvas.edits)
+        core.saved_token=snapshot.token
+        self.canvas.image_layers._saved=snapshot.image_digest
+        self.canvas.official_image_edits.mark_saved(snapshot.native_digest)
         self.record_recent_file(path)
         history_target=getattr(self,'_page_history_target',None)
         if history_target:
@@ -836,20 +1030,14 @@ class Viewer(QMainWindow):
             remember=getattr(self,'_remember_current_page',None)
             if remember:remember()
         self.edit_changed()
-        # The disk no longer holds deleted pages' private assets. Start a new
-        # undo baseline so Ctrl+Z cannot resurrect broken page references.
-        if self.saver and (self.saver.page_plan is not None or self.saver.native_image_changes
-                           or self.saver.native_image_lock_changes
-                           or self.saver.native_image_deletions or self.saver.native_image_layer_changes
-                           or (self.saver.image_payload and any(page['images'] for page in self.saver.image_payload[0]))
-                           or Path(previous_path).resolve()!=Path(path).resolve()):
-            self._reload_saved_path=path
+        # Original asset identities and the entire undo history remain live.
+        # The private session baseline supplies assets removed from the NTB.
         is_recovery=(Path(previous_path).resolve()!=Path(path).resolve()
                      and Path(path).stem.startswith(Path(previous_path).stem+'-保存恢复'))
         if is_recovery or getattr(self,'_save_request_show_path',False):
             self.statusBar().showMessage('已保存并检查页面素材：'+path)
         else:
-            self.statusBar().showMessage('已保存并检查页面素材')
+            self.statusBar().showMessage('已保存 · 仍有新修改待保存' if self._has_unsaved_changes() else '已保存并检查页面素材')
         # Delay the success notification until the background worker has
         # finished and the progress dialog has closed. Never report success
         # for a cancelled or failed save.
@@ -859,11 +1047,10 @@ class Viewer(QMainWindow):
 
     def save_finished(self):
         success=self.saver.succeeded
-        self.save_progress.close();self.saver.deleteLater();self.saver=None
+        self.save_progress.close();self.save_progress.deleteLater();self.saver.deleteLater();self.saver=None
+        self.statusBar().removeWidget(self._save_status);self._save_status.deleteLater()
         self.edit_toolbar.setEnabled(True);self.open_action.setEnabled(True);self.canvas.setEnabled(True);self.canvas.setUpdatesEnabled(True)
         after=self.after_save;self.after_save=None
-        reload_path=self._reload_saved_path if success else None
-        self._reload_saved_path=None
         notice=self._save_notice if success else None
         self._save_notice=None
         self._save_request_show_path=False
@@ -873,18 +1060,23 @@ class Viewer(QMainWindow):
             if is_recovery:
                 show_copyable_path_notice(self,'已安全保存到新文件',
                     'Windows 拒绝覆盖当前原文件。\n\n原文件保持不变，所有本次修改已保存到：\n'+path+
-                    '\n\n程序将重新打开保存后的文件。\n\n覆盖失败诊断：\n'+
+                    '\n\n当前编辑会话已切换到此文件，可继续编辑。\n\n覆盖失败诊断：\n'+
                     (detail or '未记录到系统错误码')+
                     '\n\n如需排查，可运行项目根目录的 DIAGNOSE_OVERWRITE.bat。',path)
-            elif show_path:
-                show_copyable_path_notice(self,'保存成功',
-                    '笔记已成功保存。\n\n文件位置：\n'+path,path)
+        self.edit_changed()
+        if not success:self.statusBar().showMessage('保存未完成，编辑内容仍保留',6000)
+        queued=self._save_queued
+        self._save_queued=False
+        if success and queued and self._has_unsaved_changes():
+            QTimer.singleShot(0,lambda:self.save_ntb(after=after))
+            return
+        if success and after:
+            # Some continuations create/replace a document directly. Do not
+            # run one against edits made AFTER its captured save revision.
+            if self._has_unsaved_changes():
+                self.statusBar().showMessage('快照已保存；保存期间有新修改，已留在编辑页。请保存后再继续。')
             else:
-                QMessageBox.information(self,'保存成功','笔记已成功保存。')
-        if success and after:QTimer.singleShot(0,after)
-        elif success and reload_path:
-            # Reload asynchronously to avoid blocking the save UI on large NTBs.
-            QTimer.singleShot(0,lambda path=reload_path:self.open_file(path))
+                QTimer.singleShot(0,after)
 
     def export_to_pdf(self):
         if self.worker or self.saver or not self.prepared:return
@@ -896,7 +1088,7 @@ class Viewer(QMainWindow):
         path=Path(target if target.lower().endswith('.pdf') else target+'.pdf').resolve()
         if path==source:
             QMessageBox.warning(self,'导出位置错误','不能覆盖当前打开的原始文件，请另选文件名。');return
-        from import_export.nv_export import _pages
+        from import_export.ne_export import _pages
         count=len(_pages(self.canvas,self.prepared))
         progress=prepare_progress(QProgressDialog('正在导出 PDF…','取消',0,count,self),'正在导出 PDF')
         progress.setWindowModality(Qt.WindowModality.ApplicationModal)
@@ -984,6 +1176,7 @@ class Viewer(QMainWindow):
         return action
 
     def import_pdf_as_ntb(self, source=None):
+        if hasattr(self,'workspace') and self.workspace.busy():return
         """Prepare an editable NTB with each PDF page as a background."""
         if self.worker or self.saver or self.pdf_importer:
             return
@@ -1008,7 +1201,7 @@ class Viewer(QMainWindow):
                 if probe.needs_pass:
                     raise ValueError('加密 PDF 暂不支持，请先解密后导入。')
                 count=probe.page_count
-                from import_export.nv_official_pdf import MIN_PAGES,MAX_IMPORT_PAGES
+                from import_export.ne_official_pdf import MIN_PAGES,MAX_IMPORT_PAGES
                 if not MIN_PAGES<=count<=MAX_IMPORT_PAGES:
                     raise ValueError(f'PDF 导入支持 {MIN_PAGES}～{MAX_IMPORT_PAGES} 页，当前输入 {count} 页。')
         except Exception as exc:
@@ -1064,30 +1257,33 @@ class Viewer(QMainWindow):
 
     def choose_file(self):
         """Opening intentionally excludes PDF: importing creates an editable NTB."""
+        if hasattr(self,'workspace') and self.workspace.busy():return
         path,_ = QFileDialog.getOpenFileName(self,'打开 Notability 笔记','','Notability 笔记 (*.ntb *.note)')
         if path:
             self.open_file(path)
 
     def create_new_note(self):
+        if hasattr(self,'workspace') and self.workspace.busy():return
         if self.worker or self.saver or self.pdf_importer:
             return
-        from import_export.nv_newnote import NewNoteDialog
+        from import_export.ne_newnote import NewNoteDialog
         dialog=NewNoteDialog(self)
         if dialog.exec()!=QDialog.DialogCode.Accepted.value:
             return
         preset,background=dialog.values()
+        color=dialog.paper_color
         if not self.confirm_leave(
-                lambda: self._create_new_note_draft(preset,background),
+                lambda: self._create_new_note_draft(preset,background,color),
                 continue_label='新建笔记'):
             return
-        self._create_new_note_draft(preset,background)
+        self._create_new_note_draft(preset,background,color)
 
-    def _create_new_note_draft(self,preset,background):
-        from import_export.nv_importdraft import NewNoteDraft
-        from import_export.nv_newnote import create_newnote_ntb
+    def _create_new_note_draft(self,preset,background,color='#ffffff'):
+        from import_export.ne_importdraft import NewNoteDraft
+        from import_export.ne_newnote import create_newnote_ntb
         draft=NewNoteDraft()
         try:
-            create_newnote_ntb(draft.path,preset,background)
+            create_newnote_ntb(draft.path,preset,background,color=color)
         except Exception as exc:
             draft.cleanup()
             QMessageBox.warning(self,'无法新建笔记',str(exc))
@@ -1100,7 +1296,7 @@ class Viewer(QMainWindow):
         """Remember only real opened/saved note files, never temporary drafts."""
         if os.environ.get('NV_DISABLE_RECENT_FILES')=='1':
             return
-        from settings.nv_recent_files import add_recent_file
+        from settings.ne_recent_files import add_recent_file
         value=Path(path)
         if value.suffix.lower() not in ('.ntb','.note') or not value.is_file():
             return
@@ -1109,12 +1305,15 @@ class Viewer(QMainWindow):
         except OSError as exc:
             diagnostic_exception("record recent file",exc)
             return
+        if hasattr(self,'workspace'):
+            try:self.workspace.record(value)
+            except OSError as exc:diagnostic_exception('record library note',exc)
         refresh_recent_menu(self)
 
     def open_recent_file(self,path):
         if not Path(path).is_file():
-            from settings.nv_recent_files import remove_recent_file
-            from settings.nv_page_history import forget_last_page
+            from settings.ne_recent_files import remove_recent_file
+            from settings.ne_page_history import forget_last_page
             remove_recent_file(self.color_settings,path)
             forget_last_page(self.color_settings,path)
             refresh_recent_menu(self)
@@ -1125,8 +1324,8 @@ class Viewer(QMainWindow):
         self.open_file(path)
 
     def clear_recent_files(self):
-        from settings.nv_recent_files import clear_recent_files
-        from settings.nv_page_history import clear_last_pages
+        from settings.ne_recent_files import clear_recent_files
+        from settings.ne_page_history import clear_last_pages
         clear_recent_files(self.color_settings)
         clear_last_pages(self.color_settings)
         refresh_recent_menu(self)
@@ -1145,7 +1344,8 @@ class Viewer(QMainWindow):
         if file_action(path)!='open':
             QMessageBox.warning(self,'无法打开文件','打开文件仅支持 .ntb 与 .note。\n如需使用 PDF，请选择「导入 PDF」。')
             return
-        if self.worker is not None or self.saver is not None or self.pdf_importer is not None:
+        if (self.worker is not None or self.saver is not None or self.pdf_importer is not None
+                or (hasattr(self,'workspace') and self.workspace.busy())):
             return
         if not skip_leave_check and not self.confirm_leave(
                 lambda: self.open_file(path), continue_label='打开其他笔记'):
@@ -1158,6 +1358,7 @@ class Viewer(QMainWindow):
         self.worker = LoadWorker(path,self)
         self.worker.progress.connect(self.update_progress)
         self.worker.ready.connect(self.install_note)
+        self.worker.page_access_ready.connect(self.install_page_access)
         self.worker.failed.connect(self.load_failed)
         self.worker.cancelled.connect(lambda: self.statusBar().showMessage('已取消加载'))
         self.worker.finished.connect(self.load_finished)
@@ -1187,6 +1388,13 @@ class Viewer(QMainWindow):
             self._pending_new_note_draft.cleanup()
             self._pending_new_note_draft=None
         refresh_menu_state(self)
+        if hasattr(self,'page_sidebar'):self.page_sidebar.refresh()
+
+    def install_page_access(self,prepared):
+        # A late result from an old open must never change the current model.
+        if self.prepared is not prepared or not hasattr(self.canvas,'pagesChanged'):return
+        grant_page_access(self.canvas,prepared)
+        self.page_sidebar.refresh();refresh_menu_state(self)
 
     def install_note(self, prepared):
         """Catch the UI-install phase, which runs in a Qt signal callback.
@@ -1197,6 +1405,7 @@ class Viewer(QMainWindow):
         """
         try:
             self._install_note_impl(prepared)
+            if hasattr(self,'progress'):self.progress.hide()
         except Exception as exc:
             diagnostic_exception("install_note/UI", exc)
             # Keep the note archive untouched. Detach the incomplete new view
@@ -1236,11 +1445,15 @@ class Viewer(QMainWindow):
             if prepared.archive_path or document:
                 note_height = float(root.get('data-page-height',str(prepared.height)))
                 diagnostic_stage("install note: construct PdfNoteCanvas")
-                canvas = PdfNoteCanvas(document,prepared.svg,prepared.width,note_height,archive_path=prepared.archive_path,pdf_source_path=prepared.pdf_path)
+                canvas = PdfNoteCanvas(document,prepared.svg,prepared.width,note_height,archive_path=prepared.archive_path,pdf_source_path=prepared.pdf_path,render_index=prepared.render_index)
                 canvas.setEnhancementStrength(self.strength.value()/100)
                 canvas.setEnhanced(self.enhance.isChecked())
                 canvas.setInkVisible(self.ink.isChecked())
-                canvas.setInkSmoothing(self.ink_smooth_action.isChecked())
+                canvas.setInkSmoothing(True)
+                canvas.setSamplingPrecision(self.color_settings.value('draw/sampling_spacing',.05))
+                canvas.setSmartInterpolation(
+                    self.color_settings.value('draw/smart_interpolation',True,type=bool))
+                canvas.setSeamlessPages(self.seamless_pages_action.isChecked())
                 count = canvas.page_count
             else:
                 canvas = QSvgWidget()
@@ -1272,6 +1485,9 @@ class Viewer(QMainWindow):
         if not self._is_unsaved_draft():
             self.record_recent_file(prepared.path)
         self.disk_bundle = prepared.bundle_data
+        self.disk_stamp = file_stamp(prepared.path)
+        if prepared.path.lower().endswith('.ntb'):
+            self.save_session=SaveSession(prepared.path,prepared.bundle_data)
         if hasattr(canvas,'pagesChanged'):
             canvas.pagesChanged.connect(self.pages_changed)
             # One capability check for ALL page controls, performed only after
@@ -1280,6 +1496,7 @@ class Viewer(QMainWindow):
             grant_page_access(canvas,prepared)
         self.edit_toolbar.setEnabled(prepared.path.lower().endswith('.ntb'))
         self.tools['read'].setChecked(True);self.editor_panel.set_tool('read');self.editor_panel.selection_changed(0)
+        self.tape_reveal_action.setChecked(False)
         self.update_edit_settings()
         if hasattr(canvas,'selectionChanged'):
             canvas.selectionChanged.connect(self.editor_panel.selection_changed)
@@ -1297,6 +1514,7 @@ class Viewer(QMainWindow):
         refresh_menu_state(self)
         self.count_label.setText(f' / {count}  ')
         self.edit_changed()  # Recompute title, including the unsaved PDF draft marker.
+        self.workspace.show_editor()
         self.fit()
         self.scroll.verticalScrollBar().setValue(0)
         restored_position,restored_page=self._restore_page_history(prepared.path,count)
@@ -1315,7 +1533,17 @@ class Viewer(QMainWindow):
         diagnostic_stage("install note: attach page sidebar")
         self.page_sidebar.attach(canvas)
         self.gpu.attach(canvas)
+        if hasattr(canvas,'enablePageWarmup'):canvas.enablePageWarmup()
+        if hasattr(canvas,'enableViewTiles'):canvas.enableViewTiles()
+        if getattr(canvas,'view_tiles',None) is not None and self.worker is not None:
+            canvas.view_tiles.visible_ready.connect(self.worker.page_access_gate.set)
         diagnostic_stage("install note: finished")
+        recovered=getattr(self,'_recovery_to_clear',None)
+        if recovered and str(Path(prepared.path).resolve())==recovered[1]:
+            from editing.ne_save_session import remove_recovery
+            try:remove_recovery(recovered[0])
+            except OSError as exc:diagnostic_exception('clean recovered session',exc)
+            self._recovery_to_clear=None
 
     def pages_changed(self,focus):
         self.page.setRange(1,self.canvas.page_count);self.count_label.setText(f' / {self.canvas.page_count}  ')
@@ -1323,6 +1551,12 @@ class Viewer(QMainWindow):
         self.page_sidebar.reset();self.go_page(focus+1);self.page_sidebar.sync(focus)
 
     def close_document(self):
+        self._snapshot_timer.stop()
+        if self.snapshot_worker:
+            self.snapshot_worker.stop.set()
+            self.snapshot_worker.wait()
+            self.snapshot_worker.deleteLater()
+            self.snapshot_worker=None
         remember=getattr(self,'_remember_current_page',None)
         if remember:remember()
         if hasattr(self,'_page_history_timer'):self._page_history_timer.stop()
@@ -1345,6 +1579,9 @@ class Viewer(QMainWindow):
         if self._active_new_note_draft:
             self._active_new_note_draft.cleanup()
             self._active_new_note_draft=None
+        if self.save_session:
+            self.save_session.close()
+            self.save_session=None
 
     def _sync_page_now(self):
         if self.canvas and hasattr(self.canvas,'pageAt'):
@@ -1423,7 +1660,7 @@ class Viewer(QMainWindow):
         self.gpu_state_changed(self.gpu.active,self.gpu.description)
 
     def gpu_state_changed(self,active,description):
-        from infrastructure.nv_diagnostics import debug
+        from infrastructure.ne_diagnostics import debug
         debug(f'Rendering backend: GPU={active}; {description}')
         if hasattr(self,'gpu_action'):
             self.gpu_action.setToolTip(('正在使用 GPU：' if active else '')+description)
@@ -1434,10 +1671,34 @@ class Viewer(QMainWindow):
         if hasattr(self.canvas,'setEnhanced'):
             self.canvas.setEnhanced(enabled)
 
-    def toggle_ink_smoothing(self,enabled):
-        self.color_settings.setValue('view/ink_smoothing', bool(enabled))
-        if hasattr(self.canvas,'setInkSmoothing'):
-            self.canvas.setInkSmoothing(enabled)
+    def configure_sampling_precision(self):
+        from PyQt6.QtWidgets import QInputDialog
+        current=getattr(self.canvas,'sampling_precision',.05)
+        value,accepted=QInputDialog.getDouble(self,'采样精度',
+            '最小采样间距（文档点 pt，1 pt = 1/72 英寸）\n数值越小细节越多；数值越大采样量越少。\n建议：精细 0.025，标准 0.05，流畅 0.2。\n用于之后绘制的画笔、荧光笔和遮字胶带。',current,.01,2.,3)
+        if accepted:
+            self.canvas.setSamplingPrecision(value)
+            self.color_settings.setValue('draw/sampling_spacing',value)
+            self.color_settings.sync()
+
+    def toggle_smart_interpolation(self,enabled):
+        self.color_settings.setValue('draw/smart_interpolation',bool(enabled))
+        self.color_settings.sync()
+        if hasattr(self.canvas,'setSmartInterpolation'):
+            self.canvas.setSmartInterpolation(bool(enabled))
+
+
+    def toggle_seamless_pages(self,enabled):
+        self.color_settings.setValue('view/seamless_pages',bool(enabled))
+        self.color_settings.sync()
+        canvas=self.canvas
+        if not hasattr(canvas,'setSeamlessPages'):return
+        bar=self.scroll.verticalScrollBar()
+        page=canvas.pageAt(bar.value())
+        offset=bar.value()-canvas.pageTop(page)
+        canvas.setSeamlessPages(enabled)
+        bar.setValue(round(canvas.pageTop(page)+offset))
+        self.sync_page()
 
     def toggle_ink(self,enabled):
         if not enabled:
@@ -1453,6 +1714,7 @@ class Viewer(QMainWindow):
 
     def _install_drop_target(self,widget):
         """Cover the empty state, scroll viewport, and loaded canvas."""
+        widget.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         widget.setAcceptDrops(True)
         widget.installEventFilter(self)
 
@@ -1498,13 +1760,28 @@ class Viewer(QMainWindow):
             event.ignore()
 
     def closeEvent(self,event):
+        job = getattr(getattr(getattr(self,'workspace',None),'home',None),'batch_job',None)
+        if job is not None:
+            job.cancel()
+            if not getattr(self,'_closing_batch',False):
+                self._closing_batch = True
+                job.finished.connect(self.close)
+            event.ignore()
+            return
+        workspace=getattr(self,'workspace',None)
+        if workspace and workspace.importer:
+            workspace.exiting=True
+            workspace.importer.stop.set()
+            workspace.importer.finished.connect(self.close)
+            event.ignore()
+            return
         if self.pdf_importer:
             self.pdf_importer.stop.set()
             event.ignore()
             self.pdf_importer.finished.connect(self.close)
             return
         if self.saver:
-            self.saver.stop.set()
+            self.statusBar().showMessage('正在完成保存，完成后关闭…')
             self.saver.finished.connect(self.close)
             event.ignore()
             return
@@ -1527,7 +1804,7 @@ class Viewer(QMainWindow):
         event.accept()
 
     def restart_application(self):
-        from settings.nv_appsettings import restart_viewer
+        from settings.ne_appsettings import restart_viewer
         restart_viewer(self)
 
 
@@ -1541,10 +1818,12 @@ def main():
         diagnostic_warning('Viewer data migration pending: ' + ' | '.join(migration['errors']))
     diagnostic_stage("Qt application creation")
     set_app_identity()
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_CompressHighFrequencyEvents,False)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_CompressTabletEvents,False)
     app = QApplication(sys.argv)
     app.setOrganizationName('NotabilityEditor')
     app.setApplicationName('NotabilityEditor')
-    app.setApplicationVersion('0.7.6-Beta')
+    app.setApplicationVersion('0.7.7-Beta')
     app.setWindowIcon(QIcon(str(icon_path())))
     app.setStyleSheet(APP_STYLE)
     diagnostic_stage("main window creation")
@@ -1553,8 +1832,19 @@ def main():
     diagnostic_stage("main window shown")
     if len(sys.argv)>1:
         QTimer.singleShot(0,lambda: window.handle_incoming_file(sys.argv[1]))
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        # Destroy the window tree while QApplication is still alive. The
+        # workspace and signal callbacks retain Python wrappers in cycles;
+        # leaving their C++ objects to QApplication/interpreter teardown can
+        # crash SIP during wrapper cleanup after main() returns.
+        diagnostic_stage("main window destruction")
+        if not sip.isdeleted(window):
+            sip.delete(window)
+        diagnostic_stage("main window destroyed")
 
 
 if __name__ == '__main__':
     sys.exit(main())
+

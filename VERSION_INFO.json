@@ -1,30 +1,10 @@
 {
-  "version": "0.7.6-Beta",
-  "base_version": "0.7.6",
+  "version": "0.7.7-Beta",
+  "base_version": "0.7.7",
   "stage": "Beta",
   "channel": "relese",
-  "internal_iteration": null,
-  "release_label_spelling": "relese",
-  "version_order": {
-    "comparison_order": [
-      "基础版本号（主、次、修订号）",
-      "同基础版本和 Beta 阶段的发布渠道",
-      "内部版本的数字编号"
-    ],
-    "relese_priority": "同一基础版本和 Beta 阶段下，relese 高于任意 v数字 内部版本，不设内部编号阈值。",
-    "internal_priority": "v数字 按整数比较，例如 v10 > v9；不得按字符串字典序比较。",
-    "base_priority": "基础版本号优先，因此 0.7.7-Beta-v1 高于 0.7.6-Beta (relese)。",
-    "examples_ascending": [
-      "0.7.6-Beta-v12",
-      "0.7.6-Beta-v999",
-      "0.7.6-Beta (relese)",
-      "0.7.7-Beta-v1",
-      "0.7.7-Beta-v2",
-      "0.7.7-Beta-v10"
-    ]
-  },
-  "description": "图片上批注、自由形状和矩形选取、本地 AI 辅助选取；新增原创代码采用 0BSD，并附免责条款。",
-  "windows_registration_policy": "注册或安装前比较已安装和已注册版本；同基础版本 relese 高于所有内部 v数字，旧版本不能覆盖较新版本。",
+  "description": "新增主页与笔记库、批量整理、持久分类、遮字胶带、自定义纸张颜色、无缝页面、智能插点、全屏浏览及触控工作台；改进保存恢复、原生格式兼容性与性能",
+  "windows_registration_policy": "注册或安装前比较已安装和已注册版本，旧版本不能覆盖较新版本。",
   "product_name": "NotabilityEditor",
   "legacy_product_names": [
     "NotabilityViewer",
@@ -32,5 +12,209 @@
   ],
   "compatibility_policy": "对外名称、安装目录、用户数据和 QSettings 使用 NotabilityEditor；启动时将旧 NotabilityViewer 日志、数据及设置校验迁移到新位置并删除旧项，成功安装后按归属清理旧程序、卸载记录和快捷方式，保留笔记内容及 NTB 格式兼容标识。跨名称安装与注册仍统一比较版本。",
   "license": "0BSD",
-  "license_scope": "Original project contributions only; see LICENSE_SCOPE and THIRD_PARTY_NOTICES."
+  "license_scope": "Original project contributions only; see LICENSE_SCOPE and THIRD_PARTY_NOTICES.",
+  "interfaces": {
+    "windows": {
+      "entry": "main.py",
+      "status": "desktop home and editor",
+      "views": [
+        "notebook home",
+        "note editor"
+      ],
+      "ui_directories": {
+        "home": "ui/home/",
+        "editor": "ui/editor/",
+        "navigation": "ui/ne_workspace.py"
+      },
+      "library_policy": "Open edits original NTB/NOTE; import copies into the managed library. Classifying managed notes moves files; external notes keep their original paths."
+    },
+    "android_tablet": {
+      "entry": "android-tablet/design/home/index.html",
+      "status": "local backend connected browser UI; native Android APK pending",
+      "main_tools": [
+        "画笔",
+        "荧光笔",
+        "橡皮擦",
+        "选择",
+        "图片",
+        "漫游"
+      ],
+      "views": [
+        "notebook homepage",
+        "note editor with side-by-side page manager"
+      ],
+      "note_file_formats": [
+        "NTB"
+      ],
+      "open_file_source": "device storage document picker",
+      "ntb_engine_status": "local NTB open / edit / atomic save / download",
+      "ui_directories": {
+        "home": "android-tablet/design/home/",
+        "editor": "android-tablet/design/editor/",
+        "shared": "android-tablet/design/shared/"
+      },
+      "backend_entry": "tablet_server.py",
+      "rewritten_directory": "rewritten/",
+      "save_policy": "automatic durable snapshots; native NTB flush on home return, graceful exit, or before next open; force-kill recovery on restart",
+      "rewrite_directory": "rewritten/",
+      "limits": {
+        "formats": [
+          "NTB"
+        ],
+        "native_apk": false,
+        "original_images_and_text": "preserved protected native content; annotation supported",
+        "original_page_copy": "not connected",
+        "pdf_import": "not connected",
+        "upload_bytes": 2147483648,
+        "page_count": 500
+      }
+    }
+  },
+  "module_prefix": "ne_",
+  "compatibility_revision": "2026-11-01",
+  "compatibility_update": {
+    "features": [
+      "多分组原生纸张与真实尾页映射",
+      "原生线段、曲线、箭头、多边形和椭圆显示及擦除",
+      "原生形状页面复制与重排",
+      "旧式彩色纸张、点阵及横线预览",
+      "多分组图片插入与跨页移动",
+      "向心三次曲线智能插点"
+    ],
+    "reference_page_counts": [
+      19,
+      3,
+      2
+    ],
+    "paper_texture_preview": "旧式纹理使用底色近似；原始纸张设置在 NTB 中保留不变。"
+  },
+  "seamless_pages": {
+    "revision": "2026-10-29",
+    "menu": "页面 → 页面无缝衔接（支持跨页绘制）",
+    "menu_scope": "仅顶部菜单栏，不在页面管理弹出菜单中显示",
+    "detail_view": "笔记正文勾选后连续衔接，取消勾选恢复页间间隔；页面管理缩略图保持原样",
+    "performance": "跨页复用已渲染内容，只更新新增笔迹及局部绘制区域",
+    "default": false,
+    "persistent_setting": "view/seamless_pages",
+    "tools": [
+      "画笔",
+      "荧光笔",
+      "橡皮擦（局部与整笔）"
+    ],
+    "undo": "一次绘制或擦除的所有跨页改动可一次撤销或重做",
+    "storage": "按原生页面边界拆分，保留接缝笔宽；关闭衔接后仍按页显示和保存"
+  },
+  "smart_interpolation": {
+    "revision": "2026-11-01",
+    "menu": "视图 → 智能插点",
+    "default": true,
+    "persistent_setting": "draw/smart_interpolation",
+    "geometry": "向心 Catmull-Rom 三次曲线，按真实输入局部增量生成",
+    "scope": "之后绘制的画笔、荧光笔和遮字胶带",
+    "preserved": [
+      "真实起点和落笔端点",
+      "明显尖角",
+      "采样精度阈值",
+      "跨页边界",
+      "撤销、擦除、显示、PDF 导出和 NTB 保存回读"
+    ],
+    "performance": "稳定段只构建一次，只有尚未固定的笔迹尾部在输入时重建"
+  },
+  "io_optimization": {
+    "immutable_table_fields": "Read validated immutable FlatBuffer field offsets once; mutable repair buffers stay live.",
+    "shared_native_layers": "Resolve native image and stroke layer state once per load; text parser skips unrelated events.",
+    "deferred_edit_geometry": "Register native Bezier bounds without flattening every page into editable polylines.",
+    "save_pipeline": "Commit the fully validated native stage directly when no private image conversion is needed.",
+    "preserved_checks": [
+      "native structure and title readback",
+      "ZIP members and CRC",
+      "source conflict detection",
+      "cancellation",
+      "fsync and atomic replacement"
+    ],
+    "structural_save": {
+      "revision": "2026-10-29",
+      "reuse": "Operation-local immutable page/graph/structure results; bounded cache, discarded on completion or cancellation.",
+      "schema": "Validate full known schema without rebuilding throwaway copies; final compaction still checks relocated graph and preserved bytes.",
+      "progress": "Report native validation work before archive copy; cancellation checked during graph traversal and event validation."
+    },
+    "background_save": {
+      "snapshot": "Freeze an immutable revision; newer ink/image/page edits remain dirty until their own snapshot commits.",
+      "interaction": "Keep canvas and tools active; show progress and cancellation in the status bar.",
+      "queue": "Coalesce repeated Ctrl+S requests into one latest-revision follow-up; never overlap writers.",
+      "continuity": "Keep canvas, zoom, scroll, undo and original assets alive after Save/Save As; avoid whole-note reload.",
+      "recovery": "Private local recovery snapshots are separate from explicit NTB saves; failures retain unsaved edits.",
+      "notification": "No modal completion/no-change dialogs; errors and recovery copies still report clearly.",
+      "native_snapshot": "Retain opaque native ink on unchanged per-page originals; snapshot only changed/new-page ink, without reparsing the entire notebook on the GUI thread."
+    },
+    "tap_rendering": {
+      "revision": "2026-10-30",
+      "screen": "Append committed pen/highlighter/tape strokes to cached page content; retain alpha, ordering and undo branch identity.",
+      "history": "Single-page continuous gestures remain single draw operations; cross-page gestures retain one undo with append metadata.",
+      "thumbnails": "Invalidate only pages touched by new ink and debounce replacement previews for 300 ms."
+    },
+    "page_priority": {
+      "revision": "2026-11-01",
+      "first_frame": "Paint the restored/current visible pages before scheduling background preparation.",
+      "background": "One low-priority worker prepares immutable edit geometry and screen rasters for up to four visible/nearby pages; jumping replaces queued work.",
+      "bounds": "Prefetch raster jobs use at most half the 96 MiB screen-cache budget; original geometry retains an eight-page LRU.",
+      "correctness": "Discard outdated raster results after edits, zoom and cache invalidation; cancel queued work and join the active worker before closing the archive.",
+      "scope": "Native structure validation and page bounds registration still precede display; rendering and editable polylines are prepared by viewing priority."
+    },
+    "save_index": {
+      "revision": "2026-11-01",
+      "scope": "Bounded immutable parse cache owned by each save session; mutable buffers bypass cache; final output validation retained."
+    }
+  },
+  "study_tape": {
+    "shortcut": "T",
+    "reveal": "临时揭开仅影响当前阅读；保存、缩略图和导出保持遮盖",
+    "storage": "原生 Tape 工具类型 3、FixedWidth 样式 1、原生图案字段 0–8",
+    "tools": [
+      "颜色",
+      "宽度",
+      "九种图案样式",
+      "局部/整笔擦除",
+      "选择移动",
+      "跨页",
+      "撤销重做"
+    ],
+    "compatibility": "通过原生胶带样本的读取、编辑、保存和重开验证；官方 Notability 导入未作实机验证。"
+  },
+  "custom_paper_color": {
+    "storage": "原生纸张 RGBA",
+    "backgrounds": [
+      "blank",
+      "ruled",
+      "dotted"
+    ]
+  },
+  "viewport_rendering": {
+    "revision": "2026-11-01",
+    "reading_mode": "visible-first asynchronous tiles with preview",
+    "tile_device_pixels": 512,
+    "tile_cache_mib": 32,
+    "editing_content_cache_mib": 64,
+    "sidebar": "background raster after visible viewport",
+    "layer_geometry": "prepared on loader thread",
+    "page_capability": "validated after first viewport; original strict validators retained",
+    "stale_results": "page identity, history revision, epoch and display options checked",
+    "editing": "existing incremental pen/highlighter and cross-page eraser retained"
+  },
+  "architecture": {
+    "shared_core": "document_core",
+    "history_index": "incremental per stable page identity",
+    "save_snapshot": "immutable shared components; mutable writer input created on worker",
+    "migration_scope": "document history and save values; existing Qt adapters retained"
+  },
+  "release_date": "2026-11-02",
+  "created_date": "2026-11-02",
+  "user_data": {
+    "root": "%LOCALAPPDATA%\\NotabilityEditor",
+    "home_index": "home-library.json",
+    "previous_snapshot": "home-library.json.bak",
+    "shared_across_versions": true,
+    "schema_version": 1,
+    "migration": "Import legacy QSettings only if no valid user-data index exists."
+  }
 }

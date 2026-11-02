@@ -43,7 +43,7 @@ def run(name):
     st = p.stat()
     print('size:', st.st_size)
     print('read_only:', not bool(st.st_mode & stat.S_IWRITE))
-    from platform_integration.nv_winlockdiag import diagnostic_lines
+    from platform_integration.ne_winlockdiag import diagnostic_lines
     for line in diagnostic_lines(p):
         print(line)
     fd, t = tempfile.mkstemp(prefix='.nv-write-check-',suffix='.tmp',dir=p.parent)

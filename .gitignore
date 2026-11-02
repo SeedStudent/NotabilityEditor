@@ -43,3 +43,6 @@ release/
 .env.*
 *.pem
 *.key
+
+# Local NTB working copies and recovery snapshots.
+.tablet-data/
