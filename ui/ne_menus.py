@@ -178,9 +178,14 @@ def build_menus(owner):
     owner.defaults_action=owner.action(tools,'默认打开程序…',owner.show_default_settings)
     settings.addAction(owner.defaults_action)
 
+    from settings.ne_updates import show_update_check
+    settings.addSeparator()
+    owner.check_updates_action=owner.action(settings,'检查更新…',lambda:show_update_check(owner))
+
     help=owner.menus['帮助']
     owner.help_action=owner.action(help,'操作与快捷键',lambda:show_help(owner),'F1')
     owner.action(help,'自定义快捷键…',lambda:show_shortcuts(owner))
+    help.addAction(owner.check_updates_action)
     owner.action(help,'关于 NotabilityEditor',lambda:show_about(owner))
     # Menus use text and checks; toolbar icons retain their button colors.
     for action in [*owner.tools.values(),owner.undo_action,owner.redo_action,owner.save_action,owner.save_as_action,owner.export_pdf_action,owner.export_note_action,
@@ -383,7 +388,7 @@ def show_about(owner):
     layout=QVBoxLayout(dialog)
     layout.setContentsMargins(26,24,26,22)
     layout.setSpacing(16)
-    add_dialog_header(layout,'NotabilityEditor','版本 0.7.7-Beta · Windows 本地笔记查看与编辑')
+    add_dialog_header(layout,'NotabilityEditor','版本 0.7.8-Beta · Windows 本地笔记查看与编辑')
     add_dialog_divider(layout)
     info=QLabel('打开文件支持 NTB、NOTE；导入功能目前只支持 PDF，并创建可编辑的 NTB。\nNTB 支持画笔、荧光笔、页面管理及批量删除。\n'
                 '可导出带底图和笔迹的 PDF，也可导出 NOTE。')

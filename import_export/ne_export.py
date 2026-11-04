@@ -42,14 +42,20 @@ def _pages(canvas, prepared):
 
 
 def write_pdf(canvas,prepared,target,progress=lambda current,total:None,cancelled=lambda:False,
-              include_ink=True,enhancement=False):
+              include_ink=True,enhancement=False,*,preserve_pdf_sizes=True):
     """Write to a same-directory temp file; never clobber a document on failure.
 
     Note: the raster background is bounded by canvas._render_page's pixel cache;
     handwriting remains drawn through Qt's vector painter when enabled.
     """
     output=Path(target).resolve();output.parent.mkdir(parents=True,exist_ok=True)
-    sizes=[_safe_point_size(size) for size in _pages(canvas,prepared)]
+    logical_sizes=[_safe_point_size(size) for size in _pages(canvas,prepared)]
+    sizes=list(logical_sizes)
+    if preserve_pdf_sizes and getattr(canvas, 'document', None):
+        for page,index in enumerate(canvas.pdf_pages):
+            if index is not None:
+                original=canvas.document.pagePointSize(index)
+                sizes[page]=_safe_point_size((original.width(),original.height()))
     if not sizes:raise ValueError('没有可导出的页面')
     fd,temp=tempfile.mkstemp(prefix='.nv-export-',suffix='.pdf',dir=output.parent)
     os.close(fd)
@@ -58,9 +64,12 @@ def write_pdf(canvas,prepared,target,progress=lambda current,total:None,cancelle
         writer=QPdfWriter(str(temp))
         writer.setResolution(144)
         writer.setTitle(Path(prepared.path).stem)
-        writer.setCreator('NotabilityEditor 0.7.7-Beta')
+        writer.setCreator('NotabilityEditor 0.7.8-Beta')
         writer.setPageMargins(QMarginsF(0,0,0,0),QPageLayout.Unit.Point)
-        writer.setPageSize(QPageSize(QSizeF(*sizes[0]),QPageSize.Unit.Point))
+        def page_size(w,h):
+            # ExactMatch avoids snapping close sizes to a standard paper format.
+            writer.setPageSize(QPageSize(QSizeF(w,h),QPageSize.Unit.Point,'',QPageSize.SizeMatchPolicy.ExactMatch))
+        page_size(*sizes[0])
         painter=QPainter()
         if not painter.begin(writer):raise OSError('无法创建 PDF 输出')
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -68,24 +77,28 @@ def write_pdf(canvas,prepared,target,progress=lambda current,total:None,cancelle
         for page,(w,h) in enumerate(sizes):
             if cancelled():raise ExportCancelled('已取消 PDF 导出')
             if page:
-                writer.setPageSize(QPageSize(QSizeF(w,h),QPageSize.Unit.Point))
+                page_size(w,h)
                 if not writer.newPage():raise OSError('无法写入下一页 PDF')
             painter.save()
             # PDF logical coordinate system: points, 144 DPI => 2 device pixels per point.
             painter.scale(writer.resolution()/72.0,writer.resolution()/72.0)
+            # The NTB editor fits imported PDF pages to a shared logical width.
+            # Keep that model and scale all layers together to physical points.
+            lw,lh=logical_sizes[page]
+            painter.scale(w/lw,h/lh)
             try:
                 if hasattr(canvas,'_render_page'):
                     # Match the on-screen background rendering, including optional enhancement.
                     render_size=QSize(max(1,round(w*2)),max(1,round(h*2)))
                     if hasattr(canvas,'official_image_edits'):
                         source=canvas._render_page(page,render_size,background_only=True)
-                        painter.drawImage(QRectF(0,0,w,h),source)
+                        painter.drawImage(QRectF(0,0,lw,lh),source)
                         from rendering.ne_mixed_layers import paint_content
-                        paint_content(canvas,painter,page,QRectF(0,0,w,h),include_ink=include_ink)
+                        paint_content(canvas,painter,page,QRectF(0,0,lw,lh),include_ink=include_ink)
                     else:
                         source=canvas._render_page(page,render_size)
-                        painter.drawImage(QRectF(0,0,w,h),source)
-                        if include_ink:canvas.paintEditableInk(painter,page,QRectF(0,0,w,h))
+                        painter.drawImage(QRectF(0,0,lw,lh),source)
+                        if include_ink:canvas.paintEditableInk(painter,page,QRectF(0,0,lw,lh))
 
                 else:
                     # Older .note files open as a single SVG canvas in this viewer.

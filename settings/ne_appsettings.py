@@ -50,6 +50,12 @@ def restart_viewer(owner):
     owner.close()
 
 
+def register_current_application():
+    """Shared registration action for Settings and the startup invitation."""
+    exe = install_application()
+    return exe, apply_default_associations(exe)
+
+
 class ApplicationDialog(QDialog):
     def __init__(self, owner=None):
         super().__init__(owner)
@@ -116,8 +122,7 @@ class ApplicationDialog(QDialog):
 
     def register(self):
         try:
-            exe = install_application()
-            status = apply_default_associations(exe)
+            exe, status = register_current_application()
             complete = all(status.values())
             details = '\n'.join(extension + '：' +
                                 ('已设为默认' if enabled else '尚未设为默认')

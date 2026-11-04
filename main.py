@@ -1,4 +1,4 @@
-"""NotabilityEditor 0.7.7-Beta - local note viewer and ink editor."""
+"""NotabilityEditor 0.7.8-Beta - local note viewer and ink editor."""
 # Release channel: relese. Same-base relese outranks every internal vN.
 # Compatibility revision: 2026-10-29 (native paper ranges and shapes).
 # Seamless pages: 2026-10-29, cross-page drawing and erasure.
@@ -290,7 +290,7 @@ class Viewer(QMainWindow):
         self._restoring_page = False
         self.zoom = 1.0
         self.fit_width = False
-        self.setWindowTitle('NotabilityEditor 0.7.7-Beta')
+        self.setWindowTitle('NotabilityEditor 0.7.8-Beta')
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1100,800)
         self.setMinimumSize(720,400)
@@ -768,20 +768,38 @@ class Viewer(QMainWindow):
             self.canvas.archive_path=path
 
     def offer_recovery(self):
-        from editing.ne_save_session import pending_recoveries
-        if pending_recoveries() and not self.worker and not self.prepared:
+        from editing.ne_save_session import scan_recoveries
+        if self.worker or self.prepared:return
+        scan=scan_recoveries()
+        self.show_recovery_issues(scan.issues)
+        if scan.entries:
             choice=QMessageBox.question(self,'发现未保存的笔记',
                 '上次编辑留下了本地恢复快照。是否恢复为新的 NTB？原文件保持不变。',
                 QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.Yes)
-            if choice==QMessageBox.StandardButton.Yes:self.recover_unsaved_note()
+            if choice==QMessageBox.StandardButton.Yes:self.recover_unsaved_note(scan=scan)
 
-    def recover_unsaved_note(self):
-        from editing.ne_save_session import pending_recoveries,read_recovery
+    def show_recovery_issues(self,issues):
+        if not issues:return
+        message=QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle('部分恢复快照无法读取')
+        message.setText(f'发现 {len(issues)} 个无法读取的恢复会话。原始恢复文件已保留，请勿删除。')
+        message.setInformativeText('其他完好的快照仍可继续恢复。可展开详细信息查看目录和原因。')
+        message.setDetailedText('\n\n'.join(str(issue.folder)+'\n'+issue.reason for issue in issues))
+        message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        message.exec()
+
+    def recover_unsaved_note(self,checked=False,*,scan=None):
+        from editing.ne_save_session import scan_recoveries,read_recovery
         from PyQt6.QtWidgets import QInputDialog
         if self.workspace.busy():return
-        entries=pending_recoveries()
+        if scan is None:
+            scan=scan_recoveries()
+            self.show_recovery_issues(scan.issues)
+        entries=scan.entries
         if not entries:
+            if scan.issues:return
             QMessageBox.information(self,'恢复笔记','没有待恢复的本地快照。');return
         labels=[f"{Path(payload['target']).name} · {payload['updated']} · {folder.name[:8]}" for folder,payload in entries]
         selected,ok=QInputDialog.getItem(self,'恢复笔记','选择未保存的笔记',labels,0,False)
@@ -1152,7 +1170,7 @@ class Viewer(QMainWindow):
                     try:
                         write_pdf(self.canvas,self.prepared,bg,progress=update,
                                   cancelled=lambda:progress.wasCanceled(),
-                                  include_ink=False,enhancement=False)
+                                  include_ink=False,enhancement=False,preserve_pdf_sizes=False)
                         if progress.wasCanceled():raise ExportCancelled('已取消 NOTE 导出')
                         result=export_note(source,path,pages,background_pdf=bg)
                     finally:
@@ -1760,6 +1778,14 @@ class Viewer(QMainWindow):
             event.ignore()
 
     def closeEvent(self,event):
+        notice = getattr(self, '_free_notice_dialog', None)
+        if notice is not None and not sip.isdeleted(notice):
+            if not notice.can_dismiss():
+                event.ignore()
+                notice.raise_()
+                notice.activateWindow()
+                return
+            notice.close()
         job = getattr(getattr(getattr(self,'workspace',None),'home',None),'batch_job',None)
         if job is not None:
             job.cancel()
@@ -1823,15 +1849,18 @@ def main():
     app = QApplication(sys.argv)
     app.setOrganizationName('NotabilityEditor')
     app.setApplicationName('NotabilityEditor')
-    app.setApplicationVersion('0.7.7-Beta')
+    app.setApplicationVersion('0.7.8-Beta')
     app.setWindowIcon(QIcon(str(icon_path())))
     app.setStyleSheet(APP_STYLE)
     diagnostic_stage("main window creation")
     window = Viewer()
     window.show()
     diagnostic_stage("main window shown")
-    if len(sys.argv)>1:
-        QTimer.singleShot(0,lambda: window.handle_incoming_file(sys.argv[1]))
+    from settings.ne_free_notice import show_startup_notices
+    def resume_startup():
+        if len(sys.argv)>1 and not sip.isdeleted(window) and window.isVisible():
+            window.handle_incoming_file(sys.argv[1])
+    QTimer.singleShot(0, lambda: show_startup_notices(window, finished=resume_startup))
     try:
         return app.exec()
     finally:

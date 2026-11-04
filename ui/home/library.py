@@ -8,14 +8,24 @@ import threading
 import time
 import uuid
 from copy import deepcopy
+from contextlib import contextmanager
+from functools import wraps
 
 from PyQt6.QtCore import QSettings, QThread, pyqtSignal
 from settings.ne_recent_files import canonical_path, read_recent_files
-from .storage import LibraryStore, validate_library
+from .storage import LibraryStore, validate_library, merge_library, LibraryConflictError
 
 
 def identity(path):
     return os.path.normcase(canonical_path(path))
+
+
+def library_edit(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
+        with self.transaction():
+            return method(self, *args, **kwargs)
+    return run
 
 
 class Library:
@@ -23,6 +33,7 @@ class Library:
 
     def __init__(self, settings, *, index_path=None):
         self.settings = settings
+        self._transaction_depth = 0
         self.store = LibraryStore(index_path)
         self.data = self.store.load()
         migrated = self.data is None
@@ -77,11 +88,16 @@ class Library:
 
     def commit(self):
         try:
-            self.store.save(self.data)
+            self.data = self.store.save(self.data, base=self._committed_data)
+        except LibraryConflictError:
+            current = self.store.load()
+            self.data = current if current is not None else deepcopy(self._committed_data)
+            self._committed_data = deepcopy(self.data)
+            raise
         except (OSError, ValueError) as exc:
             self.data = deepcopy(self._committed_data)
             raise OSError('无法保存分类与笔记索引，请检查用户数据目录：'
-                          + str(self.store.path.parent)) from exc
+                          + str(self.store.path.parent) + '\n' + str(exc)) from exc
         self._committed_data = deepcopy(self.data)
         # Retain a compatibility mirror for older releases; JSON is authoritative.
         if (os.environ.get('NV_DISABLE_RECENT_FILES') == '1'
@@ -92,12 +108,29 @@ class Library:
         if self.settings.status() != QSettings.Status.NoError:
             self.storage_notice = '分类已保存到用户数据文件，旧版设置同步未完成。'
 
+    @contextmanager
+    def transaction(self):
+        """Refresh before touching files, and hold the lock through rollback."""
+        with self.store.locked():
+            if not self._transaction_depth:
+                current = self.store.load()
+                if current is not None:
+                    self.data = merge_library(self._committed_data, self.data, current)
+                    self._committed_data = deepcopy(current)
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+
+    @library_edit
     def record(self, path):
         path = canonical_path(path)
         entry = self.data['notes'].setdefault(identity(path), {'path': path, 'category': ''})
         entry.update(path=path, opened=time.time())
         self.commit()
 
+    @library_edit
     def add_category(self, name):
         name = validate_category_name(name)
         if name.casefold() in (n.casefold() for n in self.categories.values()):
@@ -108,6 +141,7 @@ class Library:
         self.commit()
         return key
 
+    @library_edit
     def rename_category(self, key, name):
         name = validate_category_name(name)
         if any(k != key and n.casefold() == name.casefold() for k, n in self.categories.items()):
@@ -115,10 +149,12 @@ class Library:
         from .operations import NotebookOperations
         NotebookOperations(self).reorganize_category(key, name=name)
 
+    @library_edit
     def remove_category(self, key):
         from .operations import NotebookOperations
         NotebookOperations(self).reorganize_category(key, remove=True)
 
+    @library_edit
     def classify(self, path, category):
         if category and category not in self.categories:
             raise ValueError('分类不存在。')

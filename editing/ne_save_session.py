@@ -232,29 +232,80 @@ def remove_recovery(folder):
     shutil.rmtree(folder)
 
 
-def pending_recoveries():
-    result = []
+@dataclass(frozen=True)
+class RecoveryIssue:
+    folder: Path
+    reason: str
+
+
+@dataclass
+class RecoveryScan:
+    entries: list
+    issues: list
+
+
+def scan_recoveries():
+    """Keep damaged sessions visible, separate from healthy recoverable edits."""
+    result = RecoveryScan([], [])
     root = recovery_root()
-    if not root.exists():
+    try:
+        entries = list(root.glob('*/snapshot.json'))
+    except OSError as exc:
+        result.issues.append(RecoveryIssue(root, str(exc)))
         return result
-    for entry in root.glob('*/snapshot.json'):
+    for entry in entries:
         lock = QLockFile(str(entry.parent / 'owner.lock'))
         if not lock.tryLock(0):
+            if lock.error() != QLockFile.LockError.LockFailedError:
+                result.issues.append(RecoveryIssue(entry.parent, '无法访问恢复会话锁，请检查目录权限。'))
             continue  # Another running editor owns this session.
         try:
-            payload = json.loads(entry.read_text(encoding='utf-8'))
-            if payload.get('version') == 1 and (entry.parent / 'baseline.ntb').is_file():
-                result.append((entry.parent, payload))
-        except (OSError, ValueError):
-            continue
+            payload = _recovery_payload(entry.parent)
+            _recovery_data(payload, entry.parent)
+            with ZipFile(entry.parent / 'baseline.ntb') as archive:
+                archive.read('noteBundle')
+            result.entries.append((entry.parent, payload))
+        except Exception as exc:
+            result.issues.append(RecoveryIssue(entry.parent, str(exc) or type(exc).__name__))
         finally:
             lock.unlock()
-    return sorted(result, key=lambda pair: pair[1].get('updated', ''), reverse=True)
+    result.entries.sort(key=lambda pair: pair[1]['updated'], reverse=True)
+    return result
+
+
+def pending_recoveries():
+    """Compatibility list; UI uses scan_recoveries to also display failures."""
+    return scan_recoveries().entries
+
+
+def _recovery_payload(folder):
+    payload = json.loads((folder / 'snapshot.json').read_text(encoding='utf-8'))
+    if not isinstance(payload, dict) or payload.get('version') != 1:
+        raise ValueError('不支持的恢复快照版本')
+    if (any(not isinstance(payload.get(k), str) or not payload[k]
+            for k in ('source', 'target', 'updated'))
+            or type(payload.get('revision')) is not int or payload['revision'] < 0
+            or 'data' not in payload):
+        raise ValueError('恢复快照缺少必要信息或字段无效')
+    if not (folder / 'baseline.ntb').is_file():
+        raise ValueError('恢复基准文件 baseline.ntb 缺失或无法读取')
+    return payload
+
+
+def _recovery_data(payload, folder):
+    data = _decode(payload['data'], folder / 'blobs')
+    allowed = {'hidden', 'added', 'thumbnail', 'page_plan', 'image_payload',
+               'native_image_changes', 'native_image_lock_changes',
+               'native_image_deletions', 'native_image_layer_changes'}
+    if (not isinstance(data, dict) or not {'hidden', 'added'} <= data.keys()
+            or data.keys() - allowed
+            or not isinstance(data['hidden'], (set, frozenset, list, tuple))
+            or not isinstance(data['added'], (list, tuple))):
+        raise ValueError('恢复快照的编辑数据无效')
+    data.setdefault('thumbnail', None)
+    return data
 
 
 def read_recovery(folder):
     folder = Path(folder)
-    payload = json.loads((folder / 'snapshot.json').read_text(encoding='utf-8'))
-    if payload.get('version') != 1:
-        raise ValueError('不支持的恢复快照版本')
-    return _decode(payload['data'], folder / 'blobs')
+    return _recovery_data(_recovery_payload(folder), folder)

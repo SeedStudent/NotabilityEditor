@@ -51,7 +51,8 @@ class NewCategoryDialog(QDialog):
         self.name = QLineEdit()
         self.name.setAccessibleName('分类名称')
         self.name.setPlaceholderText('例如：课程笔记、工作项目')
-        self.name.setMaxLength(64)
+        # QLineEdit counts UTF-16 units; Python/storage count Unicode characters.
+        # Validate explicitly so 64 Emoji are kept intact and 65 are rejected.
         self.name.setClearButtonEnabled(True)
         label.setBuddy(self.name)
         field.addWidget(self.name)
@@ -82,6 +83,8 @@ class NewCategoryDialog(QDialog):
         name = self.name.text().strip()
         if not name:
             return ''
+        if len(name) > 64:
+            return '分类名称最多 64 个字符，请缩短名称。'
         try:
             validate_category_name(name)
         except ValueError:
@@ -101,7 +104,7 @@ class NewCategoryDialog(QDialog):
 
     def validate(self):
         error = self.validation_error()
-        self.counter.setText(f'{len(self.name.text())} / 64')
+        self.counter.setText(f'{len(self.name.text().strip())} / 64')
         self.show_error(error)
         self.create.setEnabled(bool(self.name.text().strip()) and not error)
 

@@ -1,4 +1,4 @@
-# NotabilityEditor 0.7.7-Beta - Windows one-click build and per-user install.
+# NotabilityEditor 0.7.8-Beta - Windows one-click build and per-user install.
 # ASCII-only source for reliable execution with Windows PowerShell 5.1.
 # No administrator privileges, no global Python modifications.
 $ErrorActionPreference = 'Stop'
@@ -28,7 +28,7 @@ $icon = Join-Path $root 'assets\notability-viewer.ico'
 $versionInfo = Join-Path $root 'windows_version_info.ver'
 $distDir = Join-Path $root 'dist'
 $workDir = Join-Path $root '.pyinstaller-build'
-$exeName = 'NotabilityEditor-0.7.7-Beta.exe'
+$exeName = 'NotabilityEditor-0.7.8-Beta.exe'
 $buildExe = Join-Path $distDir $exeName
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\NotabilityEditor'
 $installedExe = Join-Path $installDir 'NotabilityEditor.exe'
@@ -223,7 +223,7 @@ try {
     $dataMapping = $assetsDir + ';assets'
     Run $venvPython @(
         '-m', 'PyInstaller', '--noconfirm', '--clean', '--onefile', '--windowed', '--noupx',
-        '--name', 'NotabilityEditor-0.7.7-Beta', '--icon', $icon, '--version-file', $versionInfo,
+        '--name', 'NotabilityEditor-0.7.8-Beta', '--icon', $icon, '--version-file', $versionInfo,
         '--add-data', $dataMapping, '--runtime-hook', $runtimeHook,
         '--distpath', $distDir, '--workpath', $workDir, '--specpath', $workDir,
         $entryPoint
@@ -242,7 +242,7 @@ try {
     if ($actualHash -ne $expectedHash) {
         throw 'Installed EXE SHA256 mismatch. Old app may still be running or installation was blocked.'
     }
-    Write-Host 'Build marker: 0.7.7-Beta' -ForegroundColor Green
+    Write-Host 'Build marker: 0.7.8-Beta' -ForegroundColor Green
     Write-Host ('Verified installed EXE SHA256: ' + $actualHash) -ForegroundColor Green
     Write-Host ('Installed: ' + $installedExe) -ForegroundColor Green
 

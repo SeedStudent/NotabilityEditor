@@ -1,10 +1,28 @@
 {
-  "version": "0.7.7-Beta",
-  "base_version": "0.7.7",
+  "version": "0.7.8-Beta",
+  "base_version": "0.7.8",
   "stage": "Beta",
   "channel": "relese",
-  "description": "新增主页与笔记库、批量整理、持久分类、遮字胶带、自定义纸张颜色、无缝页面、智能插点、全屏浏览及触控工作台；改进保存恢复、原生格式兼容性与性能",
-  "windows_registration_policy": "注册或安装前比较已安装和已注册版本，旧版本不能覆盖较新版本。",
+  "internal_iteration": null,
+  "release_label_spelling": "relese",
+  "version_order": {
+    "comparison_order": [
+      "基础版本号（主、次、修订号）",
+      "同基础版本和 Beta 阶段的发布渠道",
+      "内部版本的数字编号"
+    ],
+    "relese_priority": "同一基础版本和 Beta 阶段下，relese 高于任意 v数字 内部版本，不设内部编号阈值。",
+    "internal_priority": "v数字 按整数比较，例如 v10 > v9；不得按字符串字典序比较。",
+    "base_priority": "基础版本号优先，因此 0.7.9-Beta-v1 高于 0.7.8-Beta (relese)。",
+    "examples_ascending": [
+      "0.7.7-Beta (relese)",
+      "0.7.8-Beta-v4",
+      "0.7.8-Beta (relese)",
+      "0.7.9-Beta-v1"
+    ]
+  },
+  "description": "首页、分类、恢复、PDF 导出、主动检查更新与启动提示的正式发布版本",
+  "windows_registration_policy": "注册或安装前比较已安装和已注册版本；同基础版本 relese 高于所有内部 v数字，旧版本不能覆盖较新版本。",
   "product_name": "NotabilityEditor",
   "legacy_product_names": [
     "NotabilityViewer",
@@ -86,7 +104,8 @@
       3,
       2
     ],
-    "paper_texture_preview": "旧式纹理使用底色近似；原始纸张设置在 NTB 中保留不变。"
+    "paper_texture_preview": "旧式纹理使用底色近似；原始纸张设置在 NTB 中保留不变。",
+    "version_policy": "0.7.8-Beta 为 relese 发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "seamless_pages": {
     "revision": "2026-10-29",
@@ -102,7 +121,8 @@
       "橡皮擦（局部与整笔）"
     ],
     "undo": "一次绘制或擦除的所有跨页改动可一次撤销或重做",
-    "storage": "按原生页面边界拆分，保留接缝笔宽；关闭衔接后仍按页显示和保存"
+    "storage": "按原生页面边界拆分，保留接缝笔宽；关闭衔接后仍按页显示和保存",
+    "version_policy": "0.7.8-Beta 为 relese 发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "smart_interpolation": {
     "revision": "2026-11-01",
@@ -207,8 +227,14 @@
     "save_snapshot": "immutable shared components; mutable writer input created on worker",
     "migration_scope": "document history and save values; existing Qt adapters retained"
   },
-  "release_date": "2026-11-02",
-  "created_date": "2026-11-02",
+  "release_date": "2026-11-04",
+  "created_date": "2026-11-04",
+  "provenance": {
+    "source_version": "0.7.8-Beta-v4",
+    "released_baseline": "0.7.7-Beta",
+    "original_snapshot_preserved": true,
+    "scope": "Promote the approved build without changing features or UI"
+  },
   "user_data": {
     "root": "%LOCALAPPDATA%\\NotabilityEditor",
     "home_index": "home-library.json",
@@ -216,5 +242,79 @@
     "shared_across_versions": true,
     "schema_version": 1,
     "migration": "Import legacy QSettings only if no valid user-data index exists."
+  },
+  "home_selection_fix": {
+    "revision": "2026-11-02",
+    "changes": [
+      "配对原生框选的按下与释放事件",
+      "清除选框及卡片间隙绘制残影",
+      "取消选择、失焦、隐藏、禁用、切换视图与刷新列表时结束拖选"
+    ]
+  },
+  "startup_registration": {
+    "revision": "2026-11-03",
+    "scope": "Windows packaged EXE",
+    "trigger": "Prompt on packaged Windows launch when registration is older, missing or invalid, unless explicitly opted out; a valid equal or newer registered version skips even on first launch",
+    "actions": [
+      "立即注册",
+      "暂不注册"
+    ],
+    "checkbox": "不再询问",
+    "opt_out_scope": "All future launches and versions; manual registration remains available in Settings",
+    "settings_keys": [
+      "startup/registration_prompt_disabled"
+    ],
+    "legacy_seen_records": "Preserved but ignored for reminder eligibility",
+    "version_validation": "Compare normalized full registry/EXE version keys (including channel and iteration); an equal or newer valid registered version skips; inconsistent registry/EXE versions cannot skip the reminder; newer registrations remain protected against downgrade",
+    "command_line_open": "Continue opening the requested note after the startup dialog closes"
+  },
+  "updated_date": "2026-11-04",
+  "maintenance_fixes": {
+    "library": "Process lock, three-way index merge, explicit conflict errors and serialized file operations with rollback",
+    "recovery": "Report damaged or unsupported snapshots and missing baselines/assets; preserve raw files and offer healthy sessions",
+    "pdf_export": "Preserve embedded PDF physical page sizes and scale ink/backgrounds together; keep logical sizes for NOTE backgrounds and blank paper",
+    "category_names": "64 Unicode characters consistently across input, counter, validation and storage, including Emoji",
+    "ui": "Retain existing styles, colors, layouts, buttons and menus"
+  },
+  "update_check": {
+    "revision": "2026-11-03",
+    "repository": "https://github.com/SeedStudent/NotabilityEditor",
+    "menus": [
+      "设置 → 检查更新…",
+      "帮助 → 检查更新…"
+    ],
+    "trigger": "Explicit menu click or manual recheck only; no startup requests",
+    "source": "Published GitHub Releases including prereleases; REST API with official repository Atom feed fallback",
+    "api_failure_policy": "Switch to official Releases feed on API failure; remaining retries use the feed instead of repeatedly hitting a failed API",
+    "feed_validation": "Require Atom namespace, exact repository identity and official release tag links; invalid/error pages never mean up to date",
+    "feed_completeness": "A finite recent feed can confirm a newer version exists, but cannot confirm the current version is latest; retry then fail when inconclusive",
+    "version_order": "core.ne_version.version_key; recognize leading v in release tags",
+    "failure_retries": 3,
+    "maximum_attempts": 4,
+    "request_timeout_ms": 10000,
+    "failure_text": "获取失败",
+    "presentation": "Compact result only: new version or already up to date; no release source explanation or notes",
+    "network": "Asynchronous QtNetwork; closing cancels requests and retries",
+    "download": "Always-enabled 前往发布页 button opens the project Releases page during checking, success or failure; no automatic download or installation"
+  },
+  "free_software_notice": {
+    "revision": "2026-11-03",
+    "scope": "Windows packaged EXE",
+    "order": "After registration prompt or its skip path, before opening the requested notebook",
+    "text": "NotabilityEditor is free; users who paid for it are asked to contact the seller or platform for a refund.",
+    "minimum_foreground_visible_read_ms": 5000,
+    "close_guard": [
+      "Confirmation button",
+      "Esc",
+      "Alt+F4 / WM_CLOSE",
+      "Main window close"
+    ],
+    "acknowledgement": "Only explicit dismissal after the full countdown writes the durable user setting",
+    "force_kill": "Unacknowledged notice reappears on the next launch, even if the countdown had elapsed",
+    "settings_key": "startup/free_software_notice_acknowledged/1/versions/<application-version>",
+    "independent_of_registration_opt_out": true,
+    "persists_across_versions": false,
+    "acknowledgement_scope": "One explicit confirmation per application version; each updated version prompts again",
+    "legacy_acknowledgement": "Preserved but cannot skip the current version notice"
   }
 }

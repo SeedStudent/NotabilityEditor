@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import tempfile
 import time
+from functools import wraps
 
 from PyQt6.QtCore import QFile
 from settings.ne_recent_files import read_recent_files, write_recent_files, canonical_path
@@ -26,6 +27,14 @@ def trash_file(path):
     file = QFile(str(path))
     if not file.moveToTrash():
         raise OSError('无法移入回收站，文件已保留。' + file.errorString())
+
+
+def library_transaction(method):
+    @wraps(method)
+    def run(self, *args, **kwargs):
+        with self.library.transaction():
+            return method(self, *args, **kwargs)
+    return run
 
 
 class NotebookOperations:
@@ -73,6 +82,7 @@ class NotebookOperations:
             raise
         return before, recent, history
 
+    @library_transaction
     def move_category(self, path, category, *, reason='change_category', cleanup=True):
         entry = self.entry(path)
         if not entry:
@@ -122,6 +132,7 @@ class NotebookOperations:
             except OSError:
                 pass
 
+    @library_transaction
     def reorganize_category(self, key, *, name=None, remove=False):
         library = self.library
         if key not in library.categories:
@@ -169,6 +180,7 @@ class NotebookOperations:
         write_position_history(self.library.settings, history)
         self.library.commit()
 
+    @library_transaction
     def rename(self, path, name, category):
         if not self.entry(path):
             raise ValueError('笔记不在笔记库中。')
@@ -196,6 +208,7 @@ class NotebookOperations:
             raise
         return str(target)
 
+    @library_transaction
     def remove(self, path, *, delete_file=False):
         snapshot = self._update_path(path)
         if delete_file:
