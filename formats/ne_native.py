@@ -144,6 +144,8 @@ def outline_blob(points,origin):
 
 
 def build_bundle(data,hidden,added,*,new_title=None,native_image_lock_events=None,native_image_deletions=None,native_image_layer_changes=None):
+    from formats.ne_bundle_identity import repair_generated_namespaces
+    data=repair_generated_namespaces(data)
     native_image_layer_changes=native_image_layer_changes or {}
     native_image_lock_events=native_image_lock_events or {}
     native_image_deletions=set(native_image_deletions or ())
@@ -499,6 +501,9 @@ def write_ntb(source,target,hidden,added,progress=lambda value:None,cancelled=la
             if expected_bundle is not None and current_bundle!=expected_bundle:
                 raise NativeWriteError('文件已被其他程序修改，请重新打开后再保存；当前编辑仍保留。')
             baseline=current_bundle if base_bundle is None else base_bundle
+            from formats.ne_bundle_identity import repair_generated_paper,repair_generated_paper_pattern
+            baseline=repair_generated_paper(baseline,archive)
+            baseline=repair_generated_paper_pattern(baseline,archive)
             from formats.ne_range_pages import expand_range_pages
             baseline=expand_range_pages(baseline)
             if page_plan is not None:

@@ -279,13 +279,26 @@ def document_page_size(events, buf):
     return latest
 
 
+def _plain_paper_style(style, buf):
+    if not style:
+        return False
+    marker = style.field(5)
+    if marker and not buf.valid(marker, 1):
+        return False
+    if marker and buf.data[marker] == 13:
+        return True
+    rgba = style.field(4)
+    return ((not marker or buf.data[marker] == 0) and bool(rgba) and buf.valid(rgba, 4)
+            and buf.data[rgba+3] == 255)
+
+
 def document_paper_template(events, buf):
     styles = list(_paper_styles(events, buf))
     template = _document_paper_template(events, buf, styles)
     if template is None:
         return None
     style = styles[-1][3] if styles else None
-    if style and style.field(5) and buf.data[style.field(5)] == 13:
+    if _plain_paper_style(style, buf):
         pos = style.field(4)
         if pos and buf.valid(pos, 4):
             rgb = buf.data[pos:pos+3]
@@ -313,17 +326,28 @@ def _document_paper_template(events, buf, style_history):
     kind_pos = style.field(5)
     if kind_pos and buf.valid(kind_pos,1) and buf.data[kind_pos] in (1,2,7):
         # Legacy textured paper uses the same explicit flair and spacing fields.
-        # Approximate the texture with its base colour; never alter native assets.
+        # Preset 2 is the supplied official yellow textured paper. It carries
+        # no custom RGBA; do not substitute the former guessed yellow fill.
         legacy=buf.data[kind_pos]
         pitch=buf.f32(style.field(1)) if style.field(1) else 36.
         flag=buf.data[style.field(0)] if style.field(0) else 0
         if not math.isfinite(pitch) or not 10<=pitch<=100 or flag not in (0,1):return None
-        return dict(kind='dotted' if flag else 'ruled',pitch=pitch,margin=0.,
+        from core.ne_paper_patterns import YELLOW_PAPER_COLOR
+        template = dict(kind='dotted' if flag else 'ruled',pitch=pitch,margin=0.,
                     x_origin=pitch/2,radius=.65,color='#8ca2a9' if legacy==7 else '#b1ad9a',
-                    background={1:'#faf7ef',2:'#fff5bd',7:'#dfeef3'}[legacy],
+                    background={1:'#faf7ef',2:YELLOW_PAPER_COLOR,7:'#dfeef3'}[legacy],
                     legacy_paper=legacy,approximate=True)
-    if not kind_pos or not buf.valid(kind_pos, 1) or buf.data[kind_pos] != 13:
+        if legacy == 2:
+            template['texture'] = 'yellow-paper'
+        return template
+    if not _plain_paper_style(style, buf):
         return None
+    # A modern custom-colour Paper can remain blank after page expansion or
+    # reordering changes its event-family prefix. Explicit absence of pattern
+    # fields must not discard its colour or invent horizontal rulings.
+    if (not style.field(5) and not style.field(0) and not style.field(1)
+            and style.field(4)):
+        return dict(kind='blank', approximate=True)
     pitch_pos = style.field(1)
     pitch = buf.f32(pitch_pos) if pitch_pos and buf.valid(pitch_pos, 4) else 0.0
     insets_pos = paper.field(4)
@@ -979,7 +1003,7 @@ def _compact_native_paper_type(events, buf, *, paper_size):
     else:
         return None
     marker=style.field(5)
-    if not marker or not buf.valid(marker,1) or buf.data[marker] != 13:
+    if not _plain_paper_style(style, buf):
         return None
     margins=paper.field(4)
     if not margins or not buf.valid(margins,16):

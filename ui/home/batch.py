@@ -76,7 +76,7 @@ class LibraryJob(QObject):
         failed = {identity(path) for path,_ in self.failed}
         for row in range(home.notes.count()):
             item = home.notes.item(row)
-            if identity(item.data(Qt.ItemDataRole.UserRole)) in failed:
+            if item.data(Qt.ItemDataRole.UserRole) and identity(item.data(Qt.ItemDataRole.UserRole)) in failed:
                 item.setSelected(True)
         home.notes.batch = bool(home.notes.selectedItems())
         home.selection_changed()
@@ -149,7 +149,7 @@ def classify_dialog(home, category):
     paths = tuple(home.selected_paths())
     if not paths:
         return
-    name = home.library.categories.get(category,'未分类')
+    name = home.library.category_label(category)
     managed = sum(is_managed(path) for path in paths)
     text = (f'将 {len(paths)} 本笔记更改到「{name}」。\n\n'
         f'笔记库内 {managed} 本：移动文件到目标分类目录。\n'

@@ -62,10 +62,13 @@ def _native_paper_bundle(title, preset, background, color='#ffffff'):
     builder.data = bytearray(4)
     now = struct.pack('<Q', int(time.time()*1000))
     root, fields = builder.table(8, {
-        0: (uuid.uuid4().bytes, 8), 4: (now, 8),
-        6: (bytes(4), 4), 7: (struct.pack('<H', 20), 2),
+        0: (uuid.uuid4().bytes, 8), 3: (bytes(4), 4), 4: (now, 8),
+        5: (bytes(4), 4), 6: (bytes(4), 4), 7: (struct.pack('<H', 20), 2),
     })
     struct.pack_into('<I', builder.data, 0, root)
+    namespace = ('_'+uuid.uuid4().hex).encode('ascii')
+    namespace_at = builder.vector(namespace+b'\0', len(namespace))
+    for slot in (3, 5):builder.uoffset(fields[slot], namespace_at)
     vector = builder.vector(bytes(16), 4)
     builder.uoffset(fields[6], vector)
     payload_fields = []
@@ -105,11 +108,14 @@ def _native_paper_bundle(title, preset, background, color='#ffffff'):
                 4: (struct.pack('<ffff', *margins), 4),
             })
             builder.uoffset(wrapped[0], page)
-            paper_fields = {4: (bytes.fromhex(paper_color(color)[1:])+b'\xff', 4), 5: (bytes((13,)), 1)}
+            # Use the modern Paper fields alone. legacyPaperIndex is nullable;
+            # even an explicit zero is a legacy value, not an absent setting.
+            paper_fields = {4: (bytes.fromhex(paper_color(color)[1:])+b'\xff', 4)}
             if style != 'blank':
                 paper_fields.update({
                     0: (bytes((0 if style == 'ruled' else 1,)), 1),
                     1: (struct.pack('<f', 36.), 4),
+                    2: (b'\0', 1), 3: (b'\0', 1),
                 })
             paper, _ = builder.table(6, paper_fields)
             builder.uoffset(page_fields[0], paper)
@@ -156,11 +162,14 @@ def create_newnote_ntb(target, preset, background, *, color='#ffffff', overwrite
             archive.writestr('thumbnail.png', thumbnail.tobytes('png'))
         progress(85)
         from formats.ne_native import read_structure
+        from formats.ne_bundle_identity import bundle_namespaces
         from formats.ne_ntb import document_page_size, document_paper_template
         with ZipFile(staged) as archive:
             if archive.testzip() is not None:
                 raise ValueError('新建笔记 ZIP 校验失败')
-            buf, _, events = read_structure(archive.read('noteBundle'))
+            saved_bundle = archive.read('noteBundle')
+            bundle_namespaces(saved_bundle)
+            buf, _, events = read_structure(saved_bundle)
             size = document_page_size(events, buf)
             template = document_paper_template(events, buf)
             if (size is None or template is None or template['kind'] != background

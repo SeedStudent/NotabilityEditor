@@ -109,7 +109,7 @@ class PageSidebar(QDockWidget):
         title_row=QHBoxLayout();title_row.setContentsMargins(16,0,10,0)
         title_label=QLabel('页面');title_label.setStyleSheet('font-size:15px;font-weight:600;');title_row.addWidget(title_label);title_row.addStretch()
         close=QToolButton();close.setIcon(tool_icon('close'));close.setIconSize(QSize(18,18));close.setFixedSize(30,30)
-        close.setToolTip('收起页面侧栏');close.setAccessibleName('收起页面侧栏');close.clicked.connect(self.hide);title_row.addWidget(close);layout.addLayout(title_row)
+        close.setToolTip('收起页面侧栏');close.setAccessibleName('收起页面侧栏');close.clicked.connect(lambda:self.set_user_visible(False));title_row.addWidget(close);layout.addLayout(title_row)
         search_row=QHBoxLayout();search_row.setContentsMargins(14,0,14,0)
         self.search=QLineEdit();self.search.setPlaceholderText('查找页码，如 12');self.search.setAccessibleName('查找页码')
         self.search.setClearButtonEnabled(True);self.search.addAction(tool_icon('search'),QLineEdit.ActionPosition.LeadingPosition)
@@ -193,6 +193,19 @@ class PageSidebar(QDockWidget):
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.timeout.connect(self.render_visible)
         self.list.verticalScrollBar().valueChanged.connect(lambda:self.timer.start(30))
         self.visibilityChanged.connect(lambda visible:self.timer.start(0) if visible else self.timer.stop())
+
+    def set_user_visible(self, visible):
+        """Persist explicit panel choices; home/fullscreen hides are temporary."""
+        visible = bool(visible)
+        self.setVisible(visible)
+        self.owner.color_settings.setValue('view/page_sidebar_visible', visible)
+        self.owner.color_settings.sync()
+        workspace = getattr(self.owner, 'workspace', None)
+        if workspace is not None:workspace.sidebar_visible = visible
+        view = getattr(self.owner, 'editor_view', None)
+        if view is not None and view.saved is not None:
+            geometry, state, _ = view.saved
+            view.saved = (geometry, state, visible)
 
     def popup_menu(self,pos):
         self.refresh();self.menu.popup(pos)

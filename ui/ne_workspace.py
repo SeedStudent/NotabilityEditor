@@ -70,6 +70,7 @@ class DesktopWorkspace(QObject):
         owner.edit_toolbar.show()
         owner.page_sidebar.setVisible(self.sidebar_visible)
         self.refresh_state()
+        owner.editor_view.schedule_cursor_refresh()
 
     def show_home(self):
         owner = self.owner

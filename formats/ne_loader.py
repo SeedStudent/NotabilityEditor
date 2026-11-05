@@ -29,6 +29,7 @@ class PreparedNote:
     render_index: object = None
     page_access_pending: bool = False
     page_access_result: object = None
+    compatibility_result: object = None
 
     def cleanup(self):
         if self.temp_dir:
@@ -83,6 +84,10 @@ def prepare_note(path, progress=lambda value, message: None, cancelled=lambda: F
         raise ValueError('支持 .ntb、.note 和 .pdf 文件')
     temp_dir = None
     try:
+        compatibility = None
+        if extension == '.ntb':
+            from formats.ne_compatibility import repair_on_open
+            compatibility = repair_on_open(path, cancelled=cancelled)
         with ZipFile(path) as archive:
             if extension == '.note':
                 session = next((n for n in archive.namelist() if n.endswith('Session.plist')), None)
@@ -162,7 +167,9 @@ def prepare_note(path, progress=lambda value, message: None, cancelled=lambda: F
                         output.write(chunk)
                         copied += len(chunk)
             report(100,'文件已就绪')
-            return PreparedNote(path,etree.tostring(svg),w,h,pdf_path,temp_dir,path,archive.read('noteBundle'))
+            result = PreparedNote(path,etree.tostring(svg),w,h,pdf_path,temp_dir,path,archive.read('noteBundle'))
+            result.compatibility_result = compatibility
+            return result
     except BaseException:
         if temp_dir:
             temp_dir.cleanup()

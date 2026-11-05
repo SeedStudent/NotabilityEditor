@@ -1,6 +1,6 @@
 {
-  "version": "0.7.8-Beta",
-  "base_version": "0.7.8",
+  "version": "0.7.9-Beta",
+  "base_version": "0.7.9",
   "stage": "Beta",
   "channel": "relese",
   "internal_iteration": null,
@@ -13,15 +13,15 @@
     ],
     "relese_priority": "同一基础版本和 Beta 阶段下，relese 高于任意 v数字 内部版本，不设内部编号阈值。",
     "internal_priority": "v数字 按整数比较，例如 v10 > v9；不得按字符串字典序比较。",
-    "base_priority": "基础版本号优先，因此 0.7.9-Beta-v1 高于 0.7.8-Beta (relese)。",
+    "base_priority": "基础版本号优先，因此 0.7.10-Beta-v1 高于 0.7.9-Beta (relese)。",
     "examples_ascending": [
-      "0.7.7-Beta (relese)",
-      "0.7.8-Beta-v4",
       "0.7.8-Beta (relese)",
-      "0.7.9-Beta-v1"
+      "0.7.9-Beta-v8",
+      "0.7.9-Beta (relese)",
+      "0.7.10-Beta-v1"
     ]
   },
-  "description": "首页、分类、恢复、PDF 导出、主动检查更新与启动提示的正式发布版本",
+  "description": "由 v8 定版的 relese，包含两级分类、拖动整理及旧版一级分类兼容修复",
   "windows_registration_policy": "注册或安装前比较已安装和已注册版本；同基础版本 relese 高于所有内部 v数字，旧版本不能覆盖较新版本。",
   "product_name": "NotabilityEditor",
   "legacy_product_names": [
@@ -105,7 +105,7 @@
       2
     ],
     "paper_texture_preview": "旧式纹理使用底色近似；原始纸张设置在 NTB 中保留不变。",
-    "version_policy": "0.7.8-Beta 为 relese 发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
+    "version_policy": "0.7.9-Beta-v8 为 internal 内部开发版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "seamless_pages": {
     "revision": "2026-10-29",
@@ -122,7 +122,7 @@
     ],
     "undo": "一次绘制或擦除的所有跨页改动可一次撤销或重做",
     "storage": "按原生页面边界拆分，保留接缝笔宽；关闭衔接后仍按页显示和保存",
-    "version_policy": "0.7.8-Beta 为 relese 发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
+    "version_policy": "0.7.9-Beta-v8 为 internal 内部开发版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "smart_interpolation": {
     "revision": "2026-11-01",
@@ -227,13 +227,13 @@
     "save_snapshot": "immutable shared components; mutable writer input created on worker",
     "migration_scope": "document history and save values; existing Qt adapters retained"
   },
-  "release_date": "2026-11-04",
-  "created_date": "2026-11-04",
+  "release_date": null,
+  "created_date": "2026-11-05",
   "provenance": {
-    "source_version": "0.7.8-Beta-v4",
-    "released_baseline": "0.7.7-Beta",
+    "source_version": "0.7.9-Beta-v4",
+    "released_baseline": "0.7.8-Beta",
     "original_snapshot_preserved": true,
-    "scope": "Promote the approved build without changing features or UI"
+    "scope": "Calibrate official yellow-paper preset, deterministic preview grain shared across zoom/thumbnail/PDF, scan enhancement only on PDF backgrounds; retain v4 fixes"
   },
   "user_data": {
     "root": "%LOCALAPPDATA%\\NotabilityEditor",
@@ -252,23 +252,24 @@
     ]
   },
   "startup_registration": {
-    "revision": "2026-11-03",
+    "revision": "2026-11-05",
     "scope": "Windows packaged EXE",
     "trigger": "Prompt on packaged Windows launch when registration is older, missing or invalid, unless explicitly opted out; a valid equal or newer registered version skips even on first launch",
     "actions": [
       "立即注册",
       "暂不注册"
     ],
-    "checkbox": "不再询问",
-    "opt_out_scope": "All future launches and versions; manual registration remains available in Settings",
+    "checkbox": "此版本不再询问",
+    "opt_out_scope": "Only the version that was explicitly opted out; newer versions recheck registration",
     "settings_keys": [
-      "startup/registration_prompt_disabled"
+      "startup/registration_prompt_disabled/versions/<application-version>"
     ],
     "legacy_seen_records": "Preserved but ignored for reminder eligibility",
     "version_validation": "Compare normalized full registry/EXE version keys (including channel and iteration); an equal or newer valid registered version skips; inconsistent registry/EXE versions cannot skip the reminder; newer registrations remain protected against downgrade",
-    "command_line_open": "Continue opening the requested note after the startup dialog closes"
+    "command_line_open": "Continue opening the requested note after the startup dialog closes",
+    "legacy_global_opt_out": "Preserved but ignored because it contains no version attribution"
   },
-  "updated_date": "2026-11-04",
+  "updated_date": "2026-11-05",
   "maintenance_fixes": {
     "library": "Process lock, three-way index merge, explicit conflict errors and serialized file operations with rollback",
     "recovery": "Report damaged or unsupported snapshots and missing baselines/assets; preserve raw files and offer healthy sessions",
@@ -316,5 +317,115 @@
     "persists_across_versions": false,
     "acknowledgement_scope": "One explicit confirmation per application version; each updated version prompts again",
     "legacy_acknowledgement": "Preserved but cannot skip the current version notice"
-  }
+  },
+  "cursor_transition_fix": {
+    "revision": "2026-11-05",
+    "changes": [
+      "空白滑动区使用手形，进入纸张立即按当前工具恢复光标与笔刷预览",
+      "退出画布进入工具栏时清除笔刷预览并恢复控件自身光标",
+      "空白区拖动结束或按 Esc 取消后，按鼠标实际所在区域恢复光标",
+      "滚动和画布布局变化后重新计算悬停位置，避免残留光标"
+    ],
+    "validation": "Real Qt canvas and scroll-area event regression tests; offscreen and Windows platform checks"
+  },
+  "page_sidebar_preference": {
+    "revision": "2026-11-05",
+    "settings_key": "view/page_sidebar_visible",
+    "default_visible": true,
+    "remember": "页面管理按钮、菜单、快捷键与面板收起按钮的显式展开/收起选择",
+    "restore": "下次启动以及重新进入编辑器时沿用上次选择",
+    "temporary_hides": "返回主页、进入全屏与关闭窗口不会覆盖用户选择"
+  },
+  "fast_cursor_fix": {
+    "revision": "2026-11-05",
+    "changes": [
+      "跨区事件使用最新鼠标位置，避免过期事件覆盖当前状态",
+      "拖动手形优先，捕获丢失或遗漏释放时结束拖动",
+      "失焦停止延迟刷新，弹出菜单时清除笔刷预览",
+      "相同位置跳过重复重绘，连续布局刷新合并执行"
+    ]
+  },
+  "last_tool_preference": {
+    "revision": "2026-11-05",
+    "settings_key": "editor/last_tool",
+    "default": "read",
+    "remember": "主动选择的画笔、荧光笔、胶带、橡皮擦、选择、图片或阅读工具",
+    "restore": "打开可编辑 NTB 时同步恢复工具栏、工具设置面板和画布工具",
+    "temporary_modes": "只读笔记与隐藏笔迹导致的临时阅读不会覆盖用户选择"
+  },
+  "official_tape_nib": {
+    "revision": "2026-11-05",
+    "geometry": "按用户提供的官方效果恢复固定竖向椭圆笔尖，撤回横竖等宽改动",
+    "scope": "实时与已提交笔迹、原生中心线读取、跨页裁剪、擦除选区、NTB 保存重开与 PDF 导出",
+    "validation": "Elliptical horizontal, vertical and diagonal geometry; all nine live patterns; erasure; real NTB and PDF roundtrip"
+  },
+  "native_note_namespace_fix": {
+    "revision": "2026-11-05",
+    "new_notes": "新建笔记同时写入根表 slots 3 和 5 的命名空间字符串，输出时检查引用、UTF-8 和结束标记",
+    "legacy_notes": "仅为明确识别的旧版新建笔记补齐命名空间，所有原始事件、笔迹和素材保持原字节",
+    "validation": "New-paper variants; missing-field rejection; idempotent repair; save/reopen; official template byte preservation",
+    "ios_status": "Local structural verification passed; official iOS import requires device retest"
+  },
+  "paper_appearance_fix": {
+    "revision": "2026-11-05",
+    "reference": "User-provided official preset-2 yellow dotted paper; no custom RGBA in style",
+    "background": "#fbf4c8 (median of unmarked official thumbnail margin)",
+    "texture": "Procedural approximation; fixed in paper coordinates, bounded 256x256 tile cache; no notebook thumbnail or ink reused",
+    "scope": [
+      "native paper display",
+      "page thumbnails",
+      "PDF export",
+      "NTB save/reopen metadata preservation"
+    ],
+    "enhancement": "Scan enhancement applies to PDF-backed pages only; native paper colours remain unchanged",
+    "validation": "Eight regression tests plus real official-note rendering, save/reopen and PDF raster checks"
+  },
+  "native_paper_import_fix": {
+    "revision": "2026-11-05",
+    "cause": "A nonzero legacyPaperIndex selects a background JPEG before backgroundColor in the official renderer",
+    "new_notes": "Opaque custom RGBA with legacyPaperIndex zero; selected pattern and size preserved",
+    "older_generated_notes": "On first open, migrate recognized old files in background before capturing the editing baseline; save also repairs verified generated notes",
+    "official_notes": "Official manifests and genuine textured papers are not rewritten",
+    "validation": "432 offline full official NoteBundle playback and paper SVG component cases: 144 new notes and 288 migrated v5/v6 notes; CSS background verified, SVG line-colour bridge stubbed; full application import and iOS remain unverified",
+    "current_encoding": "Modern opaque RGBA plus nullable flair/spacing and explicit false bleed/centering for patterns; legacyPaperIndex absent, not numeric zero",
+    "legacy_repair": "Append generated-native-paper-pattern-v7 migration; known generated v5/v6 and verified page-rewritten files retain pattern, spacing, colour, content and original backup"
+  },
+  "compatibility_migrations": {
+    "revision": "2026-11-05",
+    "registry": "formats/ne_compatibility.py: MIGRATIONS; append content-scoped, idempotent repairs in future versions",
+    "trigger": "NTB loading, before render and editing baseline capture; shared desktop and tablet loader",
+    "scope": "Only appVersion NotabilityViewer plus each migration structural fingerprint",
+    "repairs": [
+      "generated-root-namespaces-v4",
+      "generated-custom-paper-colour-v6",
+      "generated-native-paper-pattern-v7"
+    ],
+    "backup": "%LOCALAPPDATA%/NotabilityEditor/compatibility-backups/<original-file-sha256>.ntb.bak; exact original bytes, hash-verified before commit",
+    "commit": "Cancellable staging, asset/ZIP validation, source stamp and SHA256 conflict checks, atomic replacement; original modification time preserved",
+    "failure": "Read-only, backup failure, sharing violation, cancellation or external changes preserve source; no automatic retry loop or UI dialog",
+    "repeat": "Already-correct content does not write or create another backup; future migrations remain eligible independent of app-version markers"
+  },
+  "first_new_note_cursor_fix": {
+    "revision": "2026-11-05",
+    "cause": "Modal windows may close without owner activation, or remain the Qt active window while hidden",
+    "behavior": "Reconcile application activity and actual active owner on pointer refresh; queue refresh after editor entry, load completion and owned modal hide; never activate a window programmatically",
+    "validation": "Offscreen real asynchronous first-note load, modal creation, stationary pointer recovery, all seven tools and rapid toolbar round trips; native foreground pointer checks intentionally not run"
+  },
+  "clear_style_page_edit_fix": {
+    "revision": "2026-11-05",
+    "schema": "Official ClearStyle type 14: inline 16-byte start/end Boundary, bool paragraph, optional inline 8-byte textField",
+    "page_scope": "Verified whole-main-body start/end boundaries; scoped text fields, partial boundaries and unknown extensions remain guarded",
+    "preservation": "Retain ClearStyle, text, inks, paper patterns and colours through page expansion/compaction",
+    "validation": "Synthetic three-pattern save/reopen and supplied official yellow note move/duplicate/delete/insert with background pixel identity"
+  },
+  "category_hierarchy": {
+    "max_depth": 2,
+    "schema_version": 1,
+    "compatibility": "Keep v1 envelope; legacy clients see roots only, with child notes projected under their parent root. Optional metadata preserves child definitions and notebook membership for v8. Honor legacy root renames, moves and deletions. Automatically replace both initial schema 2 and earlier flat-child projections on startup, keeping a permanent exact backup and a legacy-readable daily backup; notebook files are untouched.",
+    "moving": "Move leaf categories between roots or promote to top level; rename roots with children. Managed files move transactionally; external references stay in place.",
+    "views": "Home shows recent notes; notebooks show nonselectable group headers with root/child counts; shortcut bars are home-only.",
+    "drag": "Drag note bodies to sidebar categories or group headers; checkbox drags retain rubber-band selection. Internal payload and source are verified.",
+    "context_menu": "Right-click blank sidebar space to create a root category; right-click a root to select it and create a child."
+  },
+  "promoted_from": "0.7.9-Beta-v8"
 }

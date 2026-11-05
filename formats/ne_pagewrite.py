@@ -29,7 +29,7 @@ def validate_page_structure(data):
     # Later releases using this exact known event layout can be processed;
     # extensions or unexpected event shapes are rejected below.
     seen=set();pages=[]
-    if any(data[e.field(4)] in (13,18,20) for _,e in events if e.field(4)):
+    if any(data[e.field(4)] in (13,14,18,20) for _,e in events if e.field(4)):
         from core.ne_bundle_compact import validate_bundle_schema
         validate_bundle_schema(data)  # Reject unknown populated shape/group fields.
     for _,e in events:
@@ -43,7 +43,10 @@ def validate_page_structure(data):
             continue
         if actor or seq in seen:raise NativeWriteError('页面管理暂不支持多作者或重复事件标识')
         seen.add(seq);typ=data[e.field(4)];p=n.payload_table(b,e)
-        if typ not in (1,3,4,7,8,12,13,15,17,18,20,22,23,24,25):raise NativeWriteError(f'包含尚未验证页面重排的事件类型 {typ}')
+        if typ not in (1,3,4,7,8,12,13,14,15,17,18,20,22,23,24,25):raise NativeWriteError(f'包含尚未验证页面重排的事件类型 {typ}')
+        if typ==14:
+            from formats.ne_native_text import validate_page_clear_style
+            validate_page_clear_style(b,e)
         if typ==4:
             if (e.slots>6 or e.field(2) or e.field(3) or not p or p.slots>4
                     or any(p.field(i) for i in (2,3))):

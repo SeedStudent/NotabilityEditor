@@ -150,6 +150,9 @@ class NotebookCard(QStyledItemDelegate):
                 painter.drawEllipse(QRectF(button.center().x()+offset-1.5,button.center().y()-1.5,3,3))
 
     def editorEvent(self, event, model, option, index):
+        entry = index.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+        if entry.get('group'):
+            return False
         if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
                             QEvent.Type.MouseButtonDblClick):
             if event.button() == Qt.MouseButton.LeftButton and self.menu_rect(option.rect).contains(event.position()):
@@ -163,6 +166,23 @@ class NotebookCard(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         entry = index.data(int(Qt.ItemDataRole.UserRole) + 1)
         if not entry:
+            painter.restore()
+            return
+        if entry.get('group'):
+            rect = QRectF(option.rect).adjusted(4, 6, -4, -2)
+            background = index.data(Qt.ItemDataRole.BackgroundRole)
+            if background:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(background)
+                painter.drawRoundedRect(rect, 6, 6)
+            font = QFont(option.font)
+            font.setPixelSize(13 if entry.get('depth') else 15)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor('#607794' if entry.get('depth') else '#284d83'))
+            label = ('    ' if entry.get('depth') else '') + entry['title'] + '  ·  ' + str(entry['count']) + ' 本'
+            painter.drawText(rect.adjusted(8, 0, -8, 0), Qt.AlignmentFlag.AlignVCenter,
+                             painter.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, round(rect.width()-16)))
             painter.restore()
             return
         if self.parent().viewMode() == QListView.ViewMode.ListMode:

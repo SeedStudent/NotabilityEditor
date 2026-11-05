@@ -13,7 +13,7 @@ from core.ne_version import ensure_registration_allowed
 from core.ne_identity import LEGACY_DISPLAY_NAMES
 
 # Release channel: relese. A same-base relese outranks every internal vN.
-VERSION = '0.7.8-Beta'
+VERSION = '0.7.9-Beta'
 COMPATIBILITY_REVISION = '2026-10-29'
 UNINSTALL_KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NotabilityEditor'
 MARKER = 'installation.json'

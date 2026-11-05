@@ -211,7 +211,3 @@ def forget_last_page(settings, path, *, limit=MAX_PAGE_HISTORY):
 def clear_last_pages(settings):
     return write_page_history(settings, ())
 
-
-def history_enabled():
-    return os.environ.get('NV_DISABLE_RECENT_FILES') != '1'
-

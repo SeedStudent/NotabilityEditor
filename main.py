@@ -1,4 +1,4 @@
-"""NotabilityEditor 0.7.8-Beta - local note viewer and ink editor."""
+"""NotabilityEditor 0.7.9-Beta - local note viewer and ink editor."""
 # Release channel: relese. Same-base relese outranks every internal vN.
 # Compatibility revision: 2026-10-29 (native paper ranges and shapes).
 # Seamless pages: 2026-10-29, cross-page drawing and erasure.
@@ -290,7 +290,7 @@ class Viewer(QMainWindow):
         self._restoring_page = False
         self.zoom = 1.0
         self.fit_width = False
-        self.setWindowTitle('NotabilityEditor 0.7.8-Beta')
+        self.setWindowTitle('NotabilityEditor 0.7.9-Beta')
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1100,800)
         self.setMinimumSize(720,400)
@@ -302,8 +302,6 @@ class Viewer(QMainWindow):
         from rendering.ne_gpuview import GpuViewport
         self.gpu_settings=QSettings('NotabilityEditor','Display')
         gpu_enabled=self.gpu_settings.value('gpu_acceleration',True,type=bool)
-        override=os.environ.get('NV_GPU_MODE','').lower()
-        if override in ('off','on'):gpu_enabled=override=='on'
         self.gpu=GpuViewport(self.scroll,gpu_enabled,self)
         self.gpu.changed.connect(self.gpu_state_changed)
         self._install_drop_target(self.scroll)
@@ -373,6 +371,7 @@ class Viewer(QMainWindow):
         self.seamless_pages_action.setEnabled(False)
         self.menuBar().insertMenu(self.menus['视图'].menuAction(),self.menus['页面'])
         self.page_toggle_action=self.page_sidebar.toggleViewAction()
+        self.page_toggle_action.triggered.connect(self.page_sidebar.set_user_visible)
         self.page_toggle_action.setText('页面管理');self.page_toggle_action.setIcon(tool_icon('pages'))
         self.page_toggle_action.setIconVisibleInMenu(False);self.page_toggle_action.setShortcut(QKeySequence('Ctrl+Shift+P'))
         self.editor_panel.page_button.setDefaultAction(self.page_toggle_action)
@@ -382,6 +381,7 @@ class Viewer(QMainWindow):
         self.shortcut_manager=ShortcutManager(self)
         self.shortcut_manager.apply()
         self.page_sidebar.visibilityChanged.connect(self.page_sidebar_visibility_changed)
+        self.page_sidebar.setVisible(self.color_settings.value('view/page_sidebar_visible',True,type=bool))
         self.page_sidebar_visibility_changed(not self.page_sidebar.isHidden())
         self.menus['视图'].addSeparator();self.menus['视图'].addAction(self.page_toggle_action)
         refresh_menu_state(self)
@@ -428,9 +428,8 @@ class Viewer(QMainWindow):
 
     def _page_history_target(self,path,*,allow_draft=False):
         from pathlib import Path
-        from settings.ne_page_history import history_enabled
         from settings.ne_recent_files import canonical_path
-        if not history_enabled() or not path:
+        if not path:
             return None
         if not allow_draft and self._is_unsaved_draft():
             return None
@@ -593,7 +592,18 @@ class Viewer(QMainWindow):
         self.tools[tool].setChecked(True)
         self.select_tool(tool)
 
-    def select_tool(self,tool):
+    def restore_edit_tool(self):
+        tool = self.color_settings.value('editor/last_tool', 'read')
+        if not isinstance(tool, str) or tool not in self.tools:tool = 'read'
+        if not self.prepared.path.lower().endswith('.ntb'):tool = 'read'
+        self.tools[tool].setChecked(True)
+        self.editor_panel.set_tool(tool)
+        if hasattr(self.canvas, 'setEditTool'):
+            if tool != 'read' and not self.ink.isChecked():
+                self.ink.setChecked(True);self.canvas.setInkVisible(True)
+            self.canvas.setEditTool(tool)
+
+    def select_tool(self,tool,*,remember=True):
         if self.pdf_importer or self.worker:return
         if not hasattr(self.canvas,'setEditTool'):return
         if not self.tools[tool].isEnabled():return
@@ -601,6 +611,9 @@ class Viewer(QMainWindow):
             self.ink.setChecked(True);self.canvas.setInkVisible(True)
         self.tools[tool].setChecked(True);self.editor_panel.set_tool(tool)
         self.update_edit_settings();self.canvas.setEditTool(tool)
+        if remember and self.prepared and self.prepared.path.lower().endswith('.ntb'):
+            self.color_settings.setValue('editor/last_tool', tool)
+            self.color_settings.sync()
         self.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
         if tool=='read':self.statusBar().showMessage('阅读：按住页面拖动可平移，松手后短暂惯性滑动；阅读位置会自动记忆')
         if tool=='select':self.statusBar().showMessage('工具 → 选择：自由形状 / 矩形 · Shift 追加 · Alt 减选 · 选框内拖动 · Ctrl+Z 撤销')
@@ -1312,8 +1325,6 @@ class Viewer(QMainWindow):
 
     def record_recent_file(self,path):
         """Remember only real opened/saved note files, never temporary drafts."""
-        if os.environ.get('NV_DISABLE_RECENT_FILES')=='1':
-            return
         from settings.ne_recent_files import add_recent_file
         value=Path(path)
         if value.suffix.lower() not in ('.ntb','.note') or not value.is_file():
@@ -1396,6 +1407,7 @@ class Viewer(QMainWindow):
 
     def load_finished(self):
         self.progress.close()
+        self.editor_view.schedule_cursor_refresh()
         self.worker.deleteLater()
         self.worker = None
         # If a newly imported draft cannot be opened, reclaim its cache.
@@ -1516,6 +1528,7 @@ class Viewer(QMainWindow):
         self.tools['read'].setChecked(True);self.editor_panel.set_tool('read');self.editor_panel.selection_changed(0)
         self.tape_reveal_action.setChecked(False)
         self.update_edit_settings()
+        self.restore_edit_tool()
         if hasattr(canvas,'selectionChanged'):
             canvas.selectionChanged.connect(self.editor_panel.selection_changed)
             canvas.selectionChanged.connect(lambda count:refresh_menu_state(self))
@@ -1721,7 +1734,7 @@ class Viewer(QMainWindow):
     def toggle_ink(self,enabled):
         if not enabled:
             self.tools['read'].setChecked(True)
-            self.select_tool('read')
+            self.select_tool('read',remember=False)
         if hasattr(self.canvas,'setInkVisible'):
             self.canvas.setInkVisible(enabled)
 
@@ -1849,7 +1862,7 @@ def main():
     app = QApplication(sys.argv)
     app.setOrganizationName('NotabilityEditor')
     app.setApplicationName('NotabilityEditor')
-    app.setApplicationVersion('0.7.8-Beta')
+    app.setApplicationVersion('0.7.9-Beta')
     app.setWindowIcon(QIcon(str(icon_path())))
     app.setStyleSheet(APP_STYLE)
     diagnostic_stage("main window creation")

@@ -1,6 +1,6 @@
 """Presentation-only fullscreen and outside-paper navigation."""
 from PyQt6.QtCore import QObject, QEvent, QPoint, QPointF, Qt, QTimer
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QCursor
 from PyQt6.QtWidgets import QApplication, QToolBar, QLabel
 
 
@@ -10,6 +10,8 @@ class EditorView(QObject):
         self.owner = owner
         self.drag = None
         self.saved = None
+        self.application_active = True
+        self.cursor_active = True
         self.action = QAction('全屏编辑', owner)
         self.action.setCheckable(True)
         self.action.triggered.connect(self.toggle)
@@ -32,6 +34,12 @@ class EditorView(QObject):
         self.bar.hide()
         owner.scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         owner.scroll.viewport().setMouseTracking(True)
+        self.cursor_refresh = QTimer(self)
+        self.cursor_refresh.setSingleShot(True)
+        self.cursor_refresh.timeout.connect(self.sync_cursor)
+        for scrollbar in (owner.scroll.horizontalScrollBar(), owner.scroll.verticalScrollBar()):
+            scrollbar.valueChanged.connect(self.schedule_cursor_refresh)
+        self.sync_cursor()
         QApplication.instance().installEventFilter(self)
 
     def update_page(self, *args):
@@ -84,11 +92,47 @@ class EditorView(QObject):
         if self.saved is not None:self.toggle()
 
     def cancel_drag(self):
-        if self.drag:
-            receiver = self.drag['receiver']
-            if self.drag['kind'] == 'mouse':receiver.releaseMouse()
-            receiver.unsetCursor()
+        drag = self.drag
         self.drag = None
+        if drag:
+            drag['canvas']._navigation_drag = False
+            # Release can deliver enter/leave events synchronously. They must see
+            # the completed gesture, and the canvas must keep its own cursor.
+            if drag['kind'] == 'mouse':drag['receiver'].releaseMouse()
+            self.sync_cursor()
+
+    def schedule_cursor_refresh(self, *args):
+        if self.application_active and not self.cursor_refresh.isActive():
+            self.cursor_refresh.start(0)
+
+    def owns_window(self, widget):
+        # QWidget.isAncestorOf stops at top-level window boundaries.
+        while widget is not None:
+            if widget is self.owner:return True
+            widget = widget.parentWidget()
+        return False
+
+    def sync_cursor(self):
+        """Re-evaluate the visible canvas after a grab or scroll moves the paper."""
+        # Closing a modal new-note/progress window does not always deliver a
+        # matching WindowActivate to its owner. Reconcile with Qt's current
+        # active window instead of keeping that old deactivation indefinitely.
+        active = QApplication.activeWindow()
+        closed_modal = (active is not None and not active.isVisible() and self.owns_window(active))
+        self.cursor_active = self.application_active and (self.owner.isActiveWindow() or closed_modal)
+        if self.drag is not None:
+            self.drag['receiver'].setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        c = self.owner.canvas
+        viewport = self.owner.scroll.viewport()
+        viewport.setCursor(Qt.CursorShape.OpenHandCursor if c else Qt.CursorShape.ArrowCursor)
+        if c is None or not hasattr(c, '_moveHover'):return
+        point = QCursor.pos()
+        local = c.mapFromGlobal(point)
+        visible = (self.cursor_active and not QApplication.activePopupWidget() and not QApplication.activeModalWidget()
+                   and c.rect().contains(local) and viewport.rect().contains(viewport.mapFromGlobal(point))
+                   and QApplication.widgetAt(point) is c)
+        c._moveHover(QPointF(local) if visible else None)
 
     def outside_paper(self, point):
         c = self.owner.canvas
@@ -101,7 +145,23 @@ class EditorView(QObject):
         t = event.type()
         if t == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape and self.drag:
             self.cancel_drag();return True
-        if t == QEvent.Type.ApplicationDeactivate:
+        if t == QEvent.Type.ApplicationDeactivate or (obj is o and t == QEvent.Type.WindowDeactivate):
+            if t == QEvent.Type.ApplicationDeactivate:self.application_active = False
+            self.cursor_active = False
+            self.cursor_refresh.stop()
+            self.cancel_drag()
+            if o.canvas is not None and hasattr(o.canvas, '_moveHover'):o.canvas._moveHover(None)
+        if t == QEvent.Type.ApplicationActivate or (obj is o and t == QEvent.Type.WindowActivate):
+            if t == QEvent.Type.ApplicationActivate:self.application_active = True
+            self.cursor_active = True
+            self.schedule_cursor_refresh()
+        # Also recover a stationary pointer when an owned modal/popup closes.
+        # Queuing lets Qt finish visibility and activation changes first.
+        if (t in (QEvent.Type.Show, QEvent.Type.Hide, QEvent.Type.Close)
+                and obj.isWidgetType() and obj.isWindow()):
+            if self.owns_window(obj):self.schedule_cursor_refresh()
+        if (t == QEvent.Type.UngrabMouse and self.drag is not None
+                and self.drag['kind'] == 'mouse' and obj is self.drag['receiver']):
             self.cancel_drag()
         if t == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape and self.saved:
             if (not QApplication.activePopupWidget() and not QApplication.activeModalWidget()
@@ -111,6 +171,16 @@ class EditorView(QObject):
         c = o.canvas
         if c is None:return False
         viewport = o.scroll.viewport()
+        if obj in (c, viewport):
+            if t in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.Show):
+                self.schedule_cursor_refresh()
+            if t in (QEvent.Type.Enter, QEvent.Type.Leave):
+                if self.drag is not None:
+                    self.drag['receiver'].setCursor(Qt.CursorShape.ClosedHandCursor)
+                    if obj is c:return True
+                if obj is viewport:
+                    if self.drag is None:viewport.setCursor(Qt.CursorShape.OpenHandCursor)
+                self.schedule_cursor_refresh()
         mouse = t in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseMove, QEvent.Type.MouseButtonRelease)
         tablet = t in (QEvent.Type.TabletPress, QEvent.Type.TabletMove, QEvent.Type.TabletRelease)
         touch = t in (QEvent.Type.TouchBegin, QEvent.Type.TouchUpdate, QEvent.Type.TouchEnd, QEvent.Type.TouchCancel)
@@ -127,24 +197,24 @@ class EditorView(QObject):
         kind = 'mouse' if mouse else 'tablet' if tablet else 'touch'
         if self.drag:
             if kind != self.drag['kind']:return False
+            if mouse and t == QEvent.Type.MouseMove and not event.buttons() & Qt.MouseButton.LeftButton:
+                self.cancel_drag();return False
             dx = point.x()-self.drag['x'];dy = point.y()-self.drag['y']
             o.scroll.horizontalScrollBar().setValue(round(self.drag['h']-dx))
             o.scroll.verticalScrollBar().setValue(round(self.drag['v']-dy))
             if end:self.cancel_drag()
             event.accept();return True
         if obj not in (c, viewport):return False
-        if not start:
-            if mouse and not event.buttons():
-                outside = self.outside_paper(point)
-                if outside:obj.setCursor(Qt.CursorShape.OpenHandCursor)
-                elif obj is viewport:obj.unsetCursor()
-            return False
+        if not start:return False
         if mouse and event.button() != Qt.MouseButton.LeftButton:return False
         if not self.outside_paper(point):return False
         if self.busy_gesture():return False
         if hasattr(c, '_cancelReadingPan'):c._cancelReadingPan()
+        if hasattr(c, '_moveHover'):c._moveHover(None)
+        c._navigation_drag = True
         self.drag = dict(x=point.x(), y=point.y(), h=o.scroll.horizontalScrollBar().value(),
                          v=o.scroll.verticalScrollBar().value(), receiver=obj, kind=kind)
+        self.drag['canvas'] = c
         obj.setCursor(Qt.CursorShape.ClosedHandCursor)
         if mouse:obj.grabMouse()
         event.accept();return True

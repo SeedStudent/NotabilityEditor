@@ -184,3 +184,9 @@ SCHEMA.update({
 PAYLOADS.update({13:'ModifyParagraphStyle',18:'CreateShape'})
 SCHEMA['CreateGroup']=(('vector',8),)
 PAYLOADS[20]='CreateGroup'
+
+# Official Desktop 26.45.7 ProcessStroke.worker-if10jNT9.js:
+# ClearStyle.start/end are inline 16-byte Boundary structs, paragraph is a
+# bool, and textField is an optional inline 8-byte entity reference.
+SCHEMA['ClearStyle']=(('scalar',16),('scalar',16),('scalar',1),('scalar',8))
+PAYLOADS[14]='ClearStyle'

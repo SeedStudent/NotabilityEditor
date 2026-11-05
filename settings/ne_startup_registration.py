@@ -1,4 +1,4 @@
-"""A version-aware Windows registration invitation with persistent opt-out."""
+"""A Windows registration invitation with a separate opt-out per version."""
 import sys
 
 from PyQt6.QtCore import Qt, QTimer
@@ -11,14 +11,21 @@ from settings.ne_appsettings import register_current_application
 from platform_integration.ne_windows import open_default_settings
 from ui.ne_toolbar import tool_icon
 
-DISABLED_KEY = 'startup/registration_prompt_disabled'
+LEGACY_DISABLED_KEY = 'startup/registration_prompt_disabled'
+
+
+def disabled_key(version=None):
+    return LEGACY_DISABLED_KEY + '/versions/' + (VERSION if version is None else version)
+
+
+DISABLED_KEY = disabled_key()
 # Legacy seen records are preserved but no longer control the reminder.
 SEEN_PREFIX = 'startup/registration_seen/'
 
 
 def should_prompt(settings, registration, *, version=VERSION):
-    """Opt-out or a valid current/newer registration skips the reminder."""
-    if settings.value(DISABLED_KEY, False, type=bool):
+    """Only this version's opt-out or a current/newer registration can skip."""
+    if settings.value(disabled_key(version), False, type=bool):
         return False
     order = registered_version_order(registration, version)
     return order is None or order < 0
@@ -78,8 +85,8 @@ class StartupRegistrationDialog(QDialog):
         self.system_button.clicked.connect(self.open_system_settings)
         self.system_button.hide()
         layout.addWidget(self.system_button)
-        self.never_ask = QCheckBox('不再询问')
-        self.never_ask.setToolTip('后续启动和更新版本均不再显示此提示，仍可从“设置”菜单手动注册。')
+        self.never_ask = QCheckBox('此版本不再询问')
+        self.never_ask.setToolTip('仅当前版本不再显示；升级后重新检查注册状态。仍可从“设置”菜单手动注册。')
         layout.addWidget(self.never_ask)
         hint = QLabel('也可稍后在“设置 → 注册应用到 Windows…”中完成。')
         hint.setObjectName('registrationSubtitle')
@@ -158,20 +165,23 @@ def show_startup_registration(owner, *, finished=None):
             finished()
         return None
     settings = owner.color_settings
-    # The global opt-out also avoids an unnecessary Windows registration read.
-    if settings.value(DISABLED_KEY, False, type=bool):
+    current_version = VERSION
+    opt_out_key = disabled_key(current_version)
+    # The former global boolean has no version attribution. Preserve it, but
+    # never let it silence a newer release. Only an explicit version key counts.
+    if settings.value(opt_out_key, False, type=bool):
         if finished:
             finished()
         return None
     registration = registered_application()
-    if not should_prompt(settings, registration):
+    if not should_prompt(settings, registration, version=current_version):
         if finished:
             finished()
         return None
     dialog = StartupRegistrationDialog(owner, registration)
     owner._startup_registration_dialog = dialog
     def closed(_result):
-        settings.setValue(DISABLED_KEY, dialog.never_ask.isChecked())
+        settings.setValue(opt_out_key, dialog.never_ask.isChecked())
         settings.sync()
         owner._startup_registration_dialog = None
         dialog.deleteLater()

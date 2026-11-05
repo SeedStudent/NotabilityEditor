@@ -388,7 +388,7 @@ def show_about(owner):
     layout=QVBoxLayout(dialog)
     layout.setContentsMargins(26,24,26,22)
     layout.setSpacing(16)
-    add_dialog_header(layout,'NotabilityEditor','版本 0.7.8-Beta · Windows 本地笔记查看与编辑')
+    add_dialog_header(layout,'NotabilityEditor','版本 0.7.9-Beta · Windows 本地笔记查看与编辑')
     add_dialog_divider(layout)
     info=QLabel('打开文件支持 NTB、NOTE；导入功能目前只支持 PDF，并创建可编辑的 NTB。\nNTB 支持画笔、荧光笔、页面管理及批量删除。\n'
                 '可导出带底图和笔迹的 PDF，也可导出 NOTE。')

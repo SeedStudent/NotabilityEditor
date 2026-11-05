@@ -5,6 +5,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QMenu, QInputDialog, QMessageBox
 from .operations import NotebookOperations, is_managed
+from .hierarchy import populate_category_menu
 from ui.ne_toolbar import tool_icon
 
 
@@ -22,12 +23,9 @@ class NotebookMenu(QMenu):
         self.addAction('重命名', self.rename)
         categories = self.addMenu('更改分类')
         entry = self.operations.entry(path) or {}
-        for key, name in [('', '未分类'), *home.library.categories.items()]:
-            action = categories.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(entry.get('category', '') == key)
-            action.triggered.connect(lambda checked=False, key=key: home.mutate(
-                lambda: home.library.classify(path, key)))
+        populate_category_menu(categories, home.library,
+            lambda key: home.mutate(lambda: home.library.classify(path, key)),
+            {entry.get('category', '')})
         self.addAction('打开所属位置', self.open_location)
         if not is_managed(path):
             self.addAction('删除笔记记录', self.remove_record)

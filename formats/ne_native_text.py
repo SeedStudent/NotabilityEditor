@@ -7,6 +7,29 @@ import struct
 import formats.ne_ntb as n
 
 
+def validate_page_clear_style(buf,event):
+    """Allow the verified whole-main-body clear, without page references.
+
+    Keep scoped text-field/range variants blocked until their references can
+    be remapped with page text boxes. ClearStyle is retained verbatim; it must
+    never be removed as a workaround for an unknown union type.
+    """
+    from formats.ne_native import NativeWriteError
+    payload=n.payload_table(buf,event)
+    if (event.slots>6 or event.field(2) or event.field(3)
+            or payload is None or payload.slots>4 or payload.field(3)):
+        raise NativeWriteError('清除文字样式事件含尚未验证的文本框引用或扩展字段')
+    for slot,boundary_type in ((0,2),(1,3)):
+        field=payload.field(slot)
+        if (not field or not buf.valid(field,16)
+                or buf.data[field:field+12]!=bytes(12)
+                or buf.data[field+12]!=boundary_type):
+            raise NativeWriteError('清除文字样式事件不是已验证的正文起止边界')
+    paragraph=payload.field(2)
+    if paragraph and (not buf.valid(paragraph,1) or buf.data[paragraph] not in (0,1)):
+        raise NativeWriteError('清除文字样式事件的段落标记无效')
+
+
 def text_records(events,b,page_indices=None,*,layer_states=None):
     blocks={};strings={};styles={}
     for _,e in events:

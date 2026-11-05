@@ -1,7 +1,6 @@
 """Persistent references and categories; importing never overwrites the source."""
 import json
 import os
-import re
 from pathlib import Path
 import tempfile
 import threading
@@ -13,7 +12,9 @@ from functools import wraps
 
 from PyQt6.QtCore import QSettings, QThread, pyqtSignal
 from settings.ne_recent_files import canonical_path, read_recent_files
-from .storage import LibraryStore, validate_library, merge_library, LibraryConflictError
+from .storage import (LibraryStore, validate_library, merge_library, LibraryConflictError,
+                      compatible_library, decode_library)
+from .hierarchy import validate_category_name, validate_hierarchy, category_rows
 
 
 def identity(path):
@@ -41,14 +42,14 @@ class Library:
         if migrated:
             raw = settings.value(self.KEY, '', type=str)
             try:
-                self.data = validate_library(json.loads(raw) if raw else {})
+                self.data = decode_library(json.loads(raw) if raw else {})
             except (ValueError, TypeError):
                 settings.setValue(self.KEY + '_recovery', raw)
                 self.data = validate_library({})
         self._committed_data = deepcopy(self.data)
         try:
             changed = self.adopt_legacy_history()
-            if (migrated or self.store.recovered) and not changed:
+            if (migrated or self.store.recovered or self.store.needs_compatibility_save) and not changed:
                 self.commit()
         except OSError as exc:
             self.storage_notice = str(exc)
@@ -86,6 +87,50 @@ class Library:
     def categories(self):
         return self.data['categories']
 
+    @property
+    def category_parents(self):
+        return self.data['category_parents']
+
+    def child_categories(self, key):
+        return [child for child in self.categories if self.category_parents.get(child) == key]
+
+    def category_rows(self):
+        return list(category_rows(self.categories, self.category_parents))
+
+    def category_label(self, key):
+        if key not in self.categories:
+            return '未分类'
+        parent = self.category_parents.get(key)
+        return (self.categories[parent] + ' / ' if parent else '') + self.categories[key]
+
+    def directory_for_category(self, key=''):
+        if not key:
+            return category_directory()
+        if key not in self.categories:
+            raise ValueError('分类不存在。')
+        directory = category_directory(self.categories[key])
+        parent = self.category_parents.get(key)
+        if parent:
+            directory = category_directory(self.categories[parent]) / validate_category_name(self.categories[key])
+        root = library_directory().resolve()
+        if not directory.resolve().is_relative_to(root):
+            raise ValueError('分类目录必须位于本机笔记库内。')
+        return directory
+
+    def validate_category(self, name, parent='', *, key=None):
+        name = validate_category_name(name)
+        if parent and (parent not in self.categories or self.category_parents.get(parent)):
+            raise ValueError('请选择现有的一级分类；分类最多支持两级。')
+        categories, parents = dict(self.categories), dict(self.category_parents)
+        candidate = key or '@new'
+        categories[candidate] = name
+        if parent:
+            parents[candidate] = parent
+        else:
+            parents.pop(candidate, None)
+        validate_hierarchy(categories, parents)
+        return name
+
     def commit(self):
         try:
             self.data = self.store.save(self.data, base=self._committed_data)
@@ -100,10 +145,7 @@ class Library:
                           + str(self.store.path.parent) + '\n' + str(exc)) from exc
         self._committed_data = deepcopy(self.data)
         # Retain a compatibility mirror for older releases; JSON is authoritative.
-        if (os.environ.get('NV_DISABLE_RECENT_FILES') == '1'
-                and self.settings.format() == QSettings.Format.NativeFormat):
-            return
-        self.settings.setValue(self.KEY, json.dumps(self.data, ensure_ascii=False))
+        self.settings.setValue(self.KEY, json.dumps(compatible_library(self.data), ensure_ascii=False))
         self.settings.sync()
         if self.settings.status() != QSettings.Status.NoError:
             self.storage_notice = '分类已保存到用户数据文件，旧版设置同步未完成。'
@@ -131,23 +173,36 @@ class Library:
         self.commit()
 
     @library_edit
-    def add_category(self, name):
-        name = validate_category_name(name)
-        if name.casefold() in (n.casefold() for n in self.categories.values()):
-            raise ValueError('已有同名分类。')
+    def add_category(self, name, parent=''):
+        name = self.validate_category(name, parent)
         key = uuid.uuid4().hex
-        category_directory(name).mkdir(parents=True, exist_ok=True)
+        before = deepcopy(self.data)
         self.categories[key] = name
+        if parent:
+            self.category_parents[key] = parent
+        try:
+            self.directory_for_category(key).mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError):
+            self.data = before
+            raise
         self.commit()
         return key
 
     @library_edit
     def rename_category(self, key, name):
-        name = validate_category_name(name)
-        if any(k != key and n.casefold() == name.casefold() for k, n in self.categories.items()):
-            raise ValueError('已有同名分类。')
+        if key not in self.categories:
+            raise ValueError('分类不存在。')
+        name = self.validate_category(name, self.category_parents.get(key, ''), key=key)
         from .operations import NotebookOperations
         NotebookOperations(self).reorganize_category(key, name=name)
+
+    @library_edit
+    def move_category(self, key, parent=''):
+        if key not in self.categories:
+            raise ValueError('分类不存在。')
+        self.validate_category(self.categories[key], parent, key=key)
+        from .operations import NotebookOperations
+        NotebookOperations(self).reorganize_category(key, parent=parent)
 
     @library_edit
     def remove_category(self, key):
@@ -177,20 +232,8 @@ class Library:
 
 
 def library_directory():
-    override = os.environ.get('NE_LIBRARY_DIR')
-    if override:
-        return Path(override)
     base = Path(os.environ.get('LOCALAPPDATA') or Path.home() / '.local' / 'share')
     return base / 'NotabilityEditor' / 'library'
-
-
-def validate_category_name(name):
-    name = name.strip()
-    if (not name or len(name) > 64 or name == '未分类' or name.endswith(('.', ' '))
-            or re.search(r'[<>:"/\\|?*\x00-\x1f]', name)
-            or re.fullmatch(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', name, re.I)):
-        raise ValueError('分类名称需要 1～64 个有效文件夹字符，“未分类”为系统默认分类。')
-    return name
 
 
 def category_directory(name='未分类'):

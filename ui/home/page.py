@@ -10,8 +10,9 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 from settings.ne_recent_files import read_recent_files
 from .library import identity
 from .cards import NotebookCard
-from .selection import NotebookList
+from .dragdrop import CategoryList, DraggableNotebookList
 from .operations import is_managed
+from .hierarchy import populate_category_menu
 from ui.ne_toolbar import tool_icon
 from platform_integration.ne_windows import icon_path
 
@@ -47,7 +48,7 @@ class HomePage(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.refresh_notes)
         left.addWidget(self.search)
-        self.categories = QListWidget()
+        self.categories = CategoryList(self)
         self.categories.setObjectName('homeCategories')
         self.categories.setSpacing(5)
         self.categories.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -58,6 +59,9 @@ class HomePage(QWidget):
         self.add_category_button = QPushButton('＋  新建分类')
         self.add_category_button.clicked.connect(self.add_category)
         left.addWidget(self.add_category_button)
+        self.manage_categories_button = QPushButton('分类管理')
+        self.manage_categories_button.clicked.connect(self.manage_categories)
+        left.addWidget(self.manage_categories_button)
         left.addWidget(self.label('打开笔记记录原位置\n导入与新建存入笔记库', 'homeSubtitle'))
         root.addWidget(self.sidebar)
         details = QWidget()
@@ -65,7 +69,9 @@ class HomePage(QWidget):
         content.setContentsMargins(24, 18, 24, 18)
         content.setSpacing(12)
         root.addWidget(details, 1)
-        top = QHBoxLayout()
+        self.top_bar = QWidget()
+        top = QHBoxLayout(self.top_bar)
+        top.setContentsMargins(0, 0, 0, 0)
         self.breadcrumb = self.label('首页', 'homeSubtitle')
         top.addWidget(self.breadcrumb)
         top.addStretch()
@@ -76,7 +82,7 @@ class HomePage(QWidget):
         button.clicked.connect(import_note)
         self.actions['import'] = button
         top.addWidget(button)
-        content.addLayout(top)
+        content.addWidget(self.top_bar)
         self.upper = QWidget()
         upper = QHBoxLayout(self.upper)
         upper.setContentsMargins(0, 8, 0, 8)
@@ -131,7 +137,7 @@ class HomePage(QWidget):
         self.view_mode.currentIndexChanged.connect(self.layout_cards)
         controls.addWidget(self.view_mode)
         content.addLayout(controls)
-        self.notes = NotebookList()
+        self.notes = DraggableNotebookList(self)
         self.notes.setObjectName('homeNotes')
         self.notes.viewport().installEventFilter(self)
         self.notes.setViewMode(QListView.ViewMode.IconMode)
@@ -219,7 +225,7 @@ class HomePage(QWidget):
             QTimer.singleShot(0, self.layout_cards)
 
     def layout_cards(self):
-        compact = self.view_mode.currentIndex() == 1
+        compact = self.view_mode.currentIndex() == 1 or self.filter == '@all'
         if self.notes.property('compactList') != compact:
             self.notes.setProperty('compactList',compact)
             self.notes.style().unpolish(self.notes)
@@ -230,7 +236,9 @@ class HomePage(QWidget):
             self.notes.setSpacing(2)
             self.notes.setGridSize(QSize())
             for row in range(self.notes.count()):
-                self.notes.item(row).setSizeHint(QSize(180, 68))
+                item = self.notes.item(row)
+                entry = item.data(int(Qt.ItemDataRole.UserRole) + 1) or {}
+                item.setSizeHint(QSize(180, 44 if entry.get('group') else 68))
             self.notes.viewport().update()
             return
         self.notes.setViewMode(QListView.ViewMode.IconMode)
@@ -262,7 +270,7 @@ class HomePage(QWidget):
         self.categories.blockSignals(True)
         self.categories.clear()
         choices = [('@home', '首页'), ('@all', '笔记'), ('@none', '未分类')]
-        choices += list(self.library.categories.items())
+        choices += [(key, name) for key, name, depth in self.library.category_rows()]
         if self.filter not in dict(choices):
             self.filter = '@home'
         for index, (key, name) in enumerate(choices):
@@ -270,12 +278,15 @@ class HomePage(QWidget):
                 heading = QListWidgetItem('分类')
                 heading.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.categories.addItem(heading)
-            label = name if key in ('@home', '@all') else '●  ' + name
+            child = self.library.category_parents.get(key)
+            label = name if key in ('@home', '@all') else ('    └  ' if child else '●  ') + name
             item = QListWidgetItem(label)
             if key in ('@home', '@all'):
                 item.setIcon(tool_icon('pages' if key == '@home' else 'new_note', '#42669b'))
             item.setData(Qt.ItemDataRole.UserRole, key)
-            item.setToolTip(name)
+            item.setToolTip(self.library.category_label(key) if key in self.library.categories else name)
+            item.setData(Qt.ItemDataRole.AccessibleTextRole,
+                         self.library.category_label(key) if key in self.library.categories else name)
             self.categories.addItem(item)
             if key == self.filter:
                 self.categories.setCurrentItem(item)
@@ -306,18 +317,46 @@ class HomePage(QWidget):
             entries.sort(key=lambda e: (Path(e['path']).stem.casefold(),identity(e['path'])),
                          reverse=self.sort.currentIndex() == 2)
         self._present_paths = {identity(entry['path']) for entry in entries}
+        category_scope = {self.filter, *self.library.child_categories(self.filter)}
+        visible_entries = []
         for entry in entries:
             path = entry['path']
             category = entry.get('category', '')
-            category_name = self.library.categories.get(category, '未分类')
+            category_name = self.library.category_label(category)
             if self.filter == '@home' and identity(path) not in recent:
                 continue
             if self.filter == '@none' and category:
                 continue
-            if not self.filter.startswith('@') and category != self.filter:
+            if not self.filter.startswith('@') and category not in category_scope:
                 continue
             if search and search not in (path + ' ' + category_name).casefold():
                 continue
+            visible_entries.append(entry)
+        rows = visible_entries
+        if self.filter == '@all':
+            rows = []
+            grouped = {}
+            for entry in visible_entries:
+                category = entry.get('category', '')
+                grouped.setdefault(category if category in self.library.categories else '', []).append(entry)
+            for key, name, depth in [*self.library.category_rows(), ('', '未分类', 0)]:
+                group_entries = grouped.get(key, [])
+                total = len(group_entries) + sum(len(grouped.get(child, [])) for child in self.library.child_categories(key))
+                if search and not total:
+                    continue
+                rows.append(dict(group=True, category=key, title=self.library.category_label(key),
+                                 count=total, depth=depth))
+                rows.extend(group_entries)
+        for entry in rows:
+            if entry.get('group'):
+                item = QListWidgetItem(entry['title'])
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+                item.setData(int(Qt.ItemDataRole.UserRole) + 1, entry)
+                item.setToolTip('将笔记拖到此标题，移入「' + entry['title'] + '」')
+                self.notes.addItem(item)
+                continue
+            path = entry['path']
+            category_name = self.library.category_label(entry.get('category', ''))
             value = Path(path)
             stamp = entry.get('opened', 0)
             when = datetime.fromtimestamp(stamp).strftime('%Y-%m-%d') if stamp else '历史记录'
@@ -337,12 +376,15 @@ class HomePage(QWidget):
         self.notes.batch = batch and bool(self.notes.selectedItems())
         self.notes.blockSignals(False)
         names = {'@home': '最近打开的笔记', '@all': '全部笔记', '@none': '未分类'}
-        self.upper.setVisible(True)
-        self.breadcrumb.setText('首页' if self.filter == '@home' else names.get(self.filter, self.library.categories.get(self.filter, '笔记')))
-        self.heading.setText(names.get(self.filter, self.library.categories.get(self.filter, '笔记')))
-        self.count.setText(f'{self.notes.count()} 本笔记')
-        self.empty.setVisible(not self.notes.count())
-        self.empty.setText('没有找到匹配的笔记。' if search else '暂无笔记，可从上方打开、导入或新建。')
+        self.top_bar.setVisible(self.filter == '@home')
+        self.upper.setVisible(self.filter == '@home')
+        self.view_mode.setVisible(self.filter != '@all')
+        title = names.get(self.filter, self.library.category_label(self.filter))
+        self.breadcrumb.setText('首页' if self.filter == '@home' else title)
+        self.heading.setText(title)
+        self.count.setText(f'{self.note_count()} 本笔记')
+        self.empty.setVisible(not self.note_count())
+        self.empty.setText('没有找到匹配的笔记。' if search else '暂无笔记，可在首页打开、导入或新建。')
         self.selection_changed()
         self.layout_cards()
 
@@ -351,10 +393,14 @@ class HomePage(QWidget):
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def selected_paths(self):
-        return [item.data(Qt.ItemDataRole.UserRole) for item in self.notes.selectedItems()]
+        return [item.data(Qt.ItemDataRole.UserRole) for item in self.notes.selectedItems()
+                if item.data(Qt.ItemDataRole.UserRole)]
+
+    def note_count(self):
+        return sum(bool(self.notes.item(row).data(Qt.ItemDataRole.UserRole)) for row in range(self.notes.count()))
 
     def toggle_all(self):
-        if len(self.selected_paths()) == self.notes.count():
+        if len(self.selected_paths()) == self.note_count():
             self.notes.cancel_selection()
         else:
             self.notes.selectAll()
@@ -373,8 +419,8 @@ class HomePage(QWidget):
         self.selection_count.setText(f'已选择 {count} 本' if count else '')
         self.select_all.blockSignals(True)
         self.select_all.setCheckState(Qt.CheckState.Unchecked if not count else
-            Qt.CheckState.Checked if count == self.notes.count() else Qt.CheckState.PartiallyChecked)
-        self.select_all.setEnabled(bool(self.notes.count()) and not self._busy)
+            Qt.CheckState.Checked if count == self.note_count() else Qt.CheckState.PartiallyChecked)
+        self.select_all.setEnabled(bool(self.note_count()) and not self._busy)
         self.select_all.blockSignals(False)
 
     def open_selection(self):
@@ -398,7 +444,7 @@ class HomePage(QWidget):
 
     def note_menu_at(self, position):
         item = self.notes.itemAt(position)
-        if item is None or not self.notes.isEnabled() or self.notes.batch:
+        if item is None or not item.data(Qt.ItemDataRole.UserRole) or not self.notes.isEnabled() or self.notes.batch:
             return
         self.notes.setCurrentItem(item)
         from .manager import NotebookMenu
@@ -406,32 +452,77 @@ class HomePage(QWidget):
         menu.exec(self.notes.viewport().mapToGlobal(position))
         menu.deleteLater()
 
-    def add_category(self):
+    def add_category(self, checked=False, *, parent_key=None):
         from .dialogs import NewCategoryDialog
-        dialog = NewCategoryDialog(self,self.library)
+        if parent_key is None:
+            parent_key = (self.library.category_parents.get(self.filter, self.filter)
+                          if self.filter in self.library.categories else '')
+        dialog = NewCategoryDialog(self,self.library,parent_key)
         try:
             if dialog.exec():
                 self.refresh()
                 self.changed.emit()
-                self.result.setText(f'已创建分类「{self.library.categories[dialog.created_key]}」。')
+                self.result.setText(f'已创建分类「{self.library.category_label(dialog.created_key)}」。')
         finally:
             dialog.deleteLater()
 
+    def manage_categories(self):
+        from .dialogs import CategoryManagerDialog
+        dialog = CategoryManagerDialog(self, self.library, self.filter)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+            self.refresh()
+            self.changed.emit()
+
+    def move_category(self, key):
+        from .dialogs import MoveCategoryDialog
+        dialog = MoveCategoryDialog(self, self.library, key)
+        try:
+            if dialog.exec():
+                self.refresh()
+                self.changed.emit()
+        finally:
+            dialog.deleteLater()
+
+    def build_category_menu(self, key=''):
+        menu = QMenu(self)
+        if not key:
+            menu.addAction('新建分类', lambda: self.add_category(parent_key=''))
+            return menu
+        if not self.library.category_parents.get(key):
+            menu.addAction('新建二级分类', lambda: self.add_category(parent_key=key))
+        menu.addAction('重命名分类', lambda: self.rename_category(key))
+        move = menu.addAction('移动分类…', lambda: self.move_category(key))
+        remove = menu.addAction('移除分类（保留笔记）', lambda: self.mutate(lambda: self.library.remove_category(key)))
+        if self.library.child_categories(key):
+            move.setEnabled(False)
+            remove.setEnabled(False)
+            move.setToolTip('请先移动二级分类，避免产生第三级。')
+            remove.setToolTip('请先移动或移除二级分类。')
+            menu.setToolTipsVisible(True)
+        return menu
+
+    def rename_category(self, key):
+        name, accepted = QInputDialog.getText(self, '重命名分类', '分类名称', text=self.library.categories[key])
+        if accepted:
+            self.mutate(lambda: self.library.rename_category(key, name))
+
     def category_menu(self, position):
+        if self._busy or not self.categories.isEnabled():
+            return
         item = self.categories.itemAt(position)
         key = item.data(Qt.ItemDataRole.UserRole) if item else ''
-        if not key or key.startswith('@'):
+        if key and key not in self.library.categories:
             return
-        menu = QMenu(self)
-        rename = menu.addAction('重命名分类')
-        remove = menu.addAction('移除分类（保留笔记）')
-        action = menu.exec(self.categories.viewport().mapToGlobal(position))
-        if action == rename:
-            name, accepted = QInputDialog.getText(self, '重命名分类', '分类名称', text=self.library.categories[key])
-            if accepted:
-                self.mutate(lambda: self.library.rename_category(key, name))
-        elif action == remove:
-            self.mutate(lambda: self.library.remove_category(key))
+        if key:
+            self.categories.setCurrentItem(item)
+        menu = self.build_category_menu(key)
+        try:
+            menu.exec(self.categories.viewport().mapToGlobal(position))
+        finally:
+            menu.deleteLater()
 
     def set_busy(self, busy):
         busy = busy or getattr(self,'batch_job',None) is not None
@@ -439,7 +530,7 @@ class HomePage(QWidget):
         for button in self.actions.values():
             button.setEnabled(not busy)
         self.notes.setEnabled(not busy)
-        for widget in (self.search,self.categories,self.sort,self.view_mode,self.add_category_button,self.cancel_select):
+        for widget in (self.search,self.categories,self.sort,self.view_mode,self.add_category_button,self.manage_categories_button,self.cancel_select):
             widget.setEnabled(not busy)
         self.selection_changed()
 
@@ -447,11 +538,7 @@ class HomePage(QWidget):
         self.classify_menu.clear()
         selected = {self.library.data['notes'].get(identity(path),{}).get('category','')
                     for path in self.selected_paths()}
-        for key,name in [('', '未分类'),*self.library.categories.items()]:
-            action = self.classify_menu.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(selected == {key})
-            action.triggered.connect(lambda checked=False,key=key:self.classify_selected(key))
+        populate_category_menu(self.classify_menu, self.library, self.classify_selected, selected)
 
     def classify_selected(self, category):
         from .batch import classify_dialog
@@ -461,6 +548,24 @@ class HomePage(QWidget):
     def delete_selected(self):
         from .batch import delete_dialog
         delete_dialog(self)
+
+    def queue_drop_classification(self, paths, category):
+        if self._busy or getattr(self, '_drop_pending', False):
+            return
+        self._drop_pending = True
+        paths = tuple(dict.fromkeys(paths))
+
+        def apply():
+            self._drop_pending = False
+            if self._busy:
+                return
+            if category and category not in self.library.categories:
+                self.result.setText('目标分类已不存在，请重新拖动。')
+                return
+            from .batch import ClassificationJob
+            ClassificationJob(self, paths, category).start()
+
+        QTimer.singleShot(0, apply)
 
 
 STYLE = """

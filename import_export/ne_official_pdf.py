@@ -16,13 +16,9 @@ from core.ne_page_geometry import page_size, pdf_page_size, thumbnail_scale
 from core.ne_titles import effective_title, validate_note_title
 
 TEMPLATES = Path(__file__).resolve().parent.parent / 'assets' / 'official_templates'
-PAGE_SIZES = (595.0, 842.0)
-# Retained for compatibility with older validation scripts, not a size gate.
-PAGE_SIZE_TOLERANCE = 0.55
 MIN_PAGES = 1
 MAX_PAGES = 30
 MAX_IMPORT_PAGES = 5000
-OFFICIAL_VERIFIED_PAGES = (2, 3, 4)
 
 
 class OfficialTemplateError(ValueError):

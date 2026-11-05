@@ -147,7 +147,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.origin(); path=urlsplit(self.path).path
             if path=='/api/bootstrap':
-                self.respond(200,dict(token=self.server.token,version='0.7.8-Beta',formats=['NTB']));return
+                self.respond(200,dict(token=self.server.token,version='0.7.9-Beta',formats=['NTB']));return
             route=path.split('/')
             if len(route)>=4 and route[1]=='api':
                 doc=self.server.engine.get(route[3])
@@ -190,7 +190,7 @@ def main():
         except OSError as exc:
             parser.exit(1,f'无法启动本地服务（端口 {args.port}）：{exc}\n')
         url=f'http://127.0.0.1:{server.server_port}/home/index.html'
-        print(f'NotabilityEditor 0.7.8-Beta\n{url}\nLocal NTB workspace: {args.data_dir.resolve()}',flush=True)
+        print(f'NotabilityEditor 0.7.9-Beta\n{url}\nLocal NTB workspace: {args.data_dir.resolve()}',flush=True)
         if not args.no_browser:webbrowser.open(url)
         stopping=False
         def stop(signum,frame):

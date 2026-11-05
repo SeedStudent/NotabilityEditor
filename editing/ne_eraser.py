@@ -20,12 +20,8 @@ def stroke_outline(path,width):
 
 
 def tape_outline(path,width):
-    """Fixed vertical elliptical nib; horizontal diameter is width / 4.
-
-    Normalize to a circular nib, sweep, then return to document coordinates.
-    The ratio is calibrated against the supplied official horizontal/vertical
-    tape screenshot. It is a display model, not a native pressure decoder.
-    """
+    """Fixed vertical elliptical nib, matching the official tape appearance."""
+    if not path.elementCount():return QPainterPath()
     normalized=QTransform.fromScale(4.,1.).map(path)
     if normalized.elementCount()==1:
         e=normalized.elementAt(0)

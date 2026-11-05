@@ -10,7 +10,7 @@ from functools import wraps
 from PyQt6.QtCore import QFile
 from settings.ne_recent_files import read_recent_files, write_recent_files, canonical_path
 from settings.ne_page_history import read_position_history, write_position_history
-from .library import identity, library_directory, category_directory
+from .library import identity, library_directory
 
 
 def is_managed(path):
@@ -49,7 +49,7 @@ class NotebookOperations:
                      for p in read_recent_files(self.library.settings)
                      if identity(p) == identity(path)), None)
 
-    def _update_path(self, old, new=None, category=None, movement=None):
+    def _update_path(self, old, new=None, category=None, movement=None, *, commit=True):
         library = self.library
         before = deepcopy(library.data)
         recent = read_recent_files(library.settings)
@@ -73,17 +73,19 @@ class NotebookOperations:
             write_position_history(library.settings, [replace(e, path=new)
                 if identity(e.path) == identity(old) else e
                 for e in history if new or identity(e.path) != identity(old)])
-            library.commit()
+            if commit:
+                library.commit()
         except Exception:
             library.data = before
             write_recent_files(library.settings, recent)
             write_position_history(library.settings, history)
-            library.commit()
+            if commit:
+                library.commit()
             raise
         return before, recent, history
 
     @library_transaction
-    def move_category(self, path, category, *, reason='change_category', cleanup=True):
+    def move_category(self, path, category, *, reason='change_category', cleanup=True, commit=True):
         entry = self.entry(path)
         if not entry:
             raise ValueError('笔记不在笔记库中。')
@@ -92,10 +94,10 @@ class NotebookOperations:
         if not is_managed(path):
             raise ValueError('外部笔记保留原位置，仅修改分类记录。')
         source = Path(path)
-        destination = category_directory(self.library.categories.get(category, '未分类'))
+        destination = self.library.directory_for_category(category)
         if source.parent.parent.resolve() == destination.resolve():
             if entry.get('category', '') != category:
-                self._update_path(path, path, category)
+                self._update_path(path, path, category, commit=commit)
             return str(source)
         destination.mkdir(parents=True, exist_ok=True)
         # Allocate an independent destination so equal notebook names never collide.
@@ -107,7 +109,7 @@ class NotebookOperations:
                 self._update_path(path, str(target), category, movement={
                     'time': time.time(), 'from_path': str(source), 'to_path': str(target),
                     'from_category': entry.get('category', ''), 'to_category': category,
-                    'reason': reason})
+                    'reason': reason}, commit=commit)
             except Exception:
                 rename_file(target, source)
                 raise
@@ -122,10 +124,11 @@ class NotebookOperations:
         root = library_directory().resolve()
         if not source.parent.name.startswith('note-'):
             return
-        for folder in (source.parent, source.parent.parent):
+        protected = {root, self.library.directory_for_category().resolve()}
+        protected.update(self.library.directory_for_category(key).resolve() for key in self.library.categories)
+        for folder in (source.parent, source.parent.parent, source.parent.parent.parent):
             resolved = folder.resolve()
-            if (resolved == root or not resolved.is_relative_to(root)
-                    or folder.name in {'未分类', *self.library.categories.values()}):
+            if resolved in protected or not resolved.is_relative_to(root):
                 continue
             try:
                 folder.rmdir()
@@ -133,25 +136,40 @@ class NotebookOperations:
                 pass
 
     @library_transaction
-    def reorganize_category(self, key, *, name=None, remove=False):
+    def reorganize_category(self, key, *, name=None, parent=None, remove=False):
         library = self.library
         if key not in library.categories:
             raise ValueError('分类不存在。')
-        old_directory = category_directory(library.categories[key])
+        children = library.child_categories(key)
+        if remove and children:
+            raise ValueError('请先移动或移除二级分类，再移除一级分类；笔记不会被删除。')
+        if not remove:
+            name = library.validate_category(name if name is not None else library.categories[key],
+                library.category_parents.get(key, '') if parent is None else parent, key=key)
+        affected = {key, *children}
+        old_directories = [library.directory_for_category(k) for k in affected]
         snapshot = (deepcopy(library.data), read_recent_files(library.settings),
                     read_position_history(library.settings))
         moved = []
         try:
             if not remove:
-                category_directory(name).mkdir(parents=True, exist_ok=True)
                 library.categories[key] = name
+                if parent is not None:
+                    if parent:
+                        library.category_parents[key] = parent
+                    else:
+                        library.category_parents.pop(key, None)
+                for affected_key in affected:
+                    library.directory_for_category(affected_key).mkdir(parents=True, exist_ok=True)
             for entry in list(library.entries()):
-                if entry.get('category') != key:
+                category = entry.get('category')
+                if category not in affected:
                     continue
                 path = entry['path']
                 if is_managed(path):
-                    target = self.move_category(path, '' if remove else key,
-                        reason='remove_category' if remove else 'rename_category', cleanup=False)
+                    target = self.move_category(path, '' if remove else category,
+                        reason='remove_category' if remove else 'move_category' if parent is not None else 'rename_category',
+                        cleanup=False, commit=False)
                     if target != path:
                         moved.append((path, target))
             if remove:
@@ -159,10 +177,13 @@ class NotebookOperations:
                     if entry.get('category') == key:
                         entry['category'] = ''
                 library.categories.pop(key)
+                library.category_parents.pop(key, None)
             library.commit()
             for source, target in moved:
                 self.cleanup_empty_folders(Path(source))
-            if remove or old_directory != category_directory(name):
+            for old_directory in sorted(old_directories, key=lambda p: len(p.parts), reverse=True):
+                if not remove and old_directory in (library.directory_for_category(k) for k in affected):
+                    continue
                 try:
                     old_directory.rmdir()
                 except OSError:

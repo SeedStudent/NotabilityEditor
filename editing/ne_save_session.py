@@ -26,9 +26,6 @@ from formats.ne_loader import LoadCancelled
 
 
 def recovery_root():
-    override = os.environ.get('NE_RECOVERY_DIR')
-    if override:
-        return Path(override).resolve()
     return Path(os.environ.get('LOCALAPPDATA', str(Path.home() / '.local' / 'share'))) / 'NotabilityEditor' / 'recovery'
 
 

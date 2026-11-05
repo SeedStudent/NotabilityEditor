@@ -65,14 +65,23 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         if tool!='image' and hasattr(self,'selected_image'):self.selected_image=None
         self.edit_tool=tool
         if image_selection_cleared:self.selectionChanged.emit(len(self.selected_indices))
-        self._syncBrushCursor()
+        self._updatePointerHover(self.hover_point)
         self.update()
+
+    def _updatePointerHover(self, fallback=None):
+        view = getattr(self.window(), 'editor_view', None)
+        if view is not None and view.owner.canvas is self:
+            view.sync_cursor()
+        else:
+            self._moveHover(fallback)
 
     def _syncBrushCursor(self):
         is_brush = self.edit_tool in ('draw', 'highlight', 'tape', 'erase')
         inside_page = (is_brush and self.show_ink and self.hover_point is not None
                        and self.pointOnPage(self.hover_point) is not None)
-        if inside_page:
+        if getattr(self, '_navigation_drag', False):
+            shape = Qt.CursorShape.ClosedHandCursor
+        elif inside_page:
             shape = Qt.CursorShape.BlankCursor
         elif self._reading_pan is not None:
             shape = Qt.CursorShape.ClosedHandCursor
@@ -312,6 +321,9 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         return QRectF(self.hover_point.x()-rx,self.hover_point.y()-ry,rx*2,ry*2).toAlignedRect()
 
     def _moveHover(self,position):
+        if getattr(self, '_navigation_drag', False):position=None
+        if self.hover_point == position:
+            self._syncBrushCursor();return
         old=self._cursorDamage();self.hover_point=position;self._syncBrushCursor();new=self._cursorDamage()
         if old is not None:self.update(old)
         if new is not None:self.update(new)
@@ -400,7 +412,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         if getattr(self,'_image_drag',None):
             self._moveImageDrag(event.position())
             event.accept();return
-        self._moveHover(event.position());self.extendGesture(event.position())
+        self._updatePointerHover(event.position());self.extendGesture(event.position())
         if self.edits.pending or self.selection_drag or self._continuous_draw is not None:event.accept()
         else:super().mouseMoveEvent(event)
 
@@ -474,8 +486,11 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
             finally:self._force_endpoint=False
         event.accept()
 
+    def enterEvent(self,event):
+        self._updatePointerHover(event.position());super().enterEvent(event)
+
     def leaveEvent(self,event):
-        self._moveHover(None);super().leaveEvent(event)
+        self._updatePointerHover();super().leaveEvent(event)
 
     def _shortcut_matches(self,name,event):
         manager=getattr(self.window(),'shortcut_manager',None)

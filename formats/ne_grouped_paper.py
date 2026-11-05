@@ -422,6 +422,9 @@ def save_native_paper(source,target,plan,hidden,added,thumbnail=None,*,base_bund
         # after an ordinary save. Replaying them on disk duplicates saved ink
         # and prevents undo from removing it.
         baseline=current if base_bundle is None else base_bundle
+        from formats.ne_bundle_identity import repair_generated_paper,repair_generated_paper_pattern
+        baseline=repair_generated_paper(baseline,archive)
+        baseline=repair_generated_paper_pattern(baseline,archive)
         rebuilt=remap_grouped_paper_bundle(baseline,plan,hidden=hidden,added=filtered_added,new_title=new_title)
         rebuild_buf,rebuild_root,_=read_structure(rebuilt)
         rebuild_version=(rebuild_buf.u16(rebuild_root.field(7))

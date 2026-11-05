@@ -8,6 +8,9 @@ from __future__ import annotations
 import math
 
 PATTERN_COLOR = '#a3b7d3'  # Sampled from paired official PDF.
+# Median of the unmarked top margin in the supplied official yellow-paper
+# thumbnail (2026-11-05). The native style stores preset 2, not custom RGBA.
+YELLOW_PAPER_COLOR = '#fbf4c8'
 DEFAULT_PITCH_PT = 36.0
 VERIFIED_LEVELS_PT = {1: 14.173235893249512, 3: 28.346471786499023, 4: 36.0}
 

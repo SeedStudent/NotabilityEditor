@@ -644,6 +644,11 @@ class PdfNoteCanvas(EditingMixin, QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         pending=False
         try:
+            if self.pdf_pages[page] is None:
+                from rendering.ne_paper_texture import paint_paper_texture
+                paint_paper_texture(painter, paper_template,
+                                    QRectF(0, 0, size.width(), size.height()),
+                                    self.editPageSize(page))
             if self.document and self.pdf_pages[page] is not None:
                 from rendering.ne_pdfrender import render_pdf_page
                 rendered=(self.pdf_rasters.get((self.pdf_pages[page],size.width(),size.height()))
@@ -695,7 +700,9 @@ class PdfNoteCanvas(EditingMixin, QWidget):
             painter.end()
         # A loading placeholder must not become a permanent paper cache entry.
         if pending:return image
-        if self.enhance_pages:
+        # Enhancement is for scanned PDF backgrounds. Native paper colours
+        # and grain are intentional, including newly inserted paper sheets.
+        if self.enhance_pages and self.document and self.pdf_pages[page] is not None:
             image = self._enhance_page(image, self.enhancement_strength)
         self.cache[key] = image
         self.cache_bytes += image.sizeInBytes()
