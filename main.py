@@ -1,4 +1,4 @@
-"""NotabilityEditor 0.7.9-Beta - local note viewer and ink editor."""
+"""NotabilityEditor 0.7.10-Beta - local note viewer and ink editor."""
 # Release channel: relese. Same-base relese outranks every internal vN.
 # Compatibility revision: 2026-10-29 (native paper ranges and shapes).
 # Seamless pages: 2026-10-29, cross-page drawing and erasure.
@@ -79,10 +79,15 @@ class LoadWorker(QThread):
                                                 and result.path.lower().endswith('.ntb'))
                 self.ready.emit(result)
                 if result.page_access_pending and not self.stop.is_set():
-                    # Let the first visible raster use CPU/GIL first. The
-                    # bounded fallback also supports opens in a hidden window.
-                    for _ in range(40):
-                        if self.stop.is_set() or self.page_access_gate.wait(.05):break
+                    # Small native notes have no costly first raster to protect.
+                    # Do not hold all editor actions behind a reading-only gate.
+                    small_native=(not result.pdf_path and len(result.svg)<=128*1024
+                                  and sum(map(len,index.ink.values()))<=64)
+                    if not small_native:
+                        # Large notes yield CPU/GIL to the first visible raster.
+                        # Hidden windows still have a bounded fallback.
+                        for _ in range(40):
+                            if self.stop.is_set() or self.page_access_gate.wait(.05):break
                     if self.stop.is_set():return
                     from pages.ne_page_access import inspect_page_access,PageAccess
                     try:access=inspect_page_access(result.bundle_data,result.path,index.page_count)
@@ -290,7 +295,7 @@ class Viewer(QMainWindow):
         self._restoring_page = False
         self.zoom = 1.0
         self.fit_width = False
-        self.setWindowTitle('NotabilityEditor 0.7.9-Beta')
+        self.setWindowTitle('NotabilityEditor 0.7.10-Beta')
         self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1100,800)
         self.setMinimumSize(720,400)
@@ -411,6 +416,8 @@ class Viewer(QMainWindow):
     def update_edit_settings(self,*args):
         if hasattr(self.canvas,'edits'):
             self.canvas.pen_color=self.current_color;self.canvas.pen_width=self.pen_size.value()
+            self.canvas.shape_color=self.current_shape_color
+            self.canvas.shape_width=self.shape_size.value();self.canvas.shape_kind=self.shape_kind
             self.canvas.highlight_color=self.current_highlight_color
             self.canvas.highlight_width=self.highlight_size.value()
             self.canvas.highlight_opacity=self.highlight_opacity.value()/100.0
@@ -620,6 +627,7 @@ class Viewer(QMainWindow):
         if tool=='image':self.statusBar().showMessage('选中图片后可跨页拖动，或点击“移动到页面…”；已锁定图片需先解锁，四角控制点用于等比例缩放。')
         if tool=='erase':self.statusBar().showMessage('橡皮擦仅擦除笔迹 · 可拖动连续擦除 · Ctrl+Z 撤销 · Esc 取消当前操作')
         if tool=='draw':self.statusBar().showMessage('画笔：移入页面可预览笔尖 · 宽度 0.1～128 · Ctrl+Z 撤销')
+        if tool=='shape':self.statusBar().showMessage('图形：拖动绘制 · Shift 正方形、圆或 45° 直线 · Esc 取消 · 选择工具移动 · Ctrl+Z 撤销')
         if tool=='highlight':self.statusBar().showMessage('荧光笔：移入页面可预览半透明笔尖 · 宽度 0.1～256 · Ctrl+Z 撤销')
         if tool=='tape':self.statusBar().showMessage('遮字胶带：拖动遮盖内容 · Ctrl+Shift+T 临时揭开/恢复 · 选择工具移动 · 橡皮擦移除')
 
@@ -948,30 +956,22 @@ class Viewer(QMainWindow):
             return
         target=self.prepared.path
         if first_save or save_as:
-            library_folder = None
             default=(str(draft.suggested_path) if first_save else
                      str(Path(target).with_name(Path(target).stem+'-副本.ntb')))
             if first_save and hasattr(self, 'workspace'):
-                from ui.home.library import category_directory
-                import uuid
-                folder = category_directory() / ('note-' + uuid.uuid4().hex)
+                from ui.home.library import category_directory, available_note_path
+                folder = category_directory()
                 try:
-                    folder.mkdir(parents=True, exist_ok=False)
+                    folder.mkdir(parents=True, exist_ok=True)
                 except OSError as exc:
                     QMessageBox.warning(self, '无法创建笔记存储目录', str(exc))
                     return
-                default = str(folder / Path(default).name)
-                library_folder = folder
+                default = str(available_note_path(folder, Path(default).name))
             dialog_title=(
                 '保存新建笔记为 NTB' if first_save and getattr(draft,'kind',None)=='new'
                 else '首次保存 PDF 笔记为 NTB' if first_save
                 else '另存为 NTB')
             target,_=QFileDialog.getSaveFileName(self,dialog_title,default,'Notability Bundle (*.ntb)')
-            if library_folder and (not target or Path(target).parent.resolve() != library_folder.resolve()):
-                try:
-                    library_folder.rmdir()
-                except OSError:
-                    pass
             if not target:return
             if not target.lower().endswith('.ntb'):target+='.ntb'
             if first_save and Path(target).resolve()==Path(self.prepared.path).resolve():
@@ -1566,8 +1566,11 @@ class Viewer(QMainWindow):
         self.gpu.attach(canvas)
         if hasattr(canvas,'enablePageWarmup'):canvas.enablePageWarmup()
         if hasattr(canvas,'enableViewTiles'):canvas.enableViewTiles()
-        if getattr(canvas,'view_tiles',None) is not None and self.worker is not None:
-            canvas.view_tiles.visible_ready.connect(self.worker.page_access_gate.set)
+        if hasattr(canvas,'firstPaintReady') and self.worker is not None:
+            canvas.firstPaintReady.connect(self.worker.page_access_gate.set)
+            if canvas._first_paint_ready:self.worker.page_access_gate.set()
+            if getattr(canvas,'view_tiles',None) is not None:
+                canvas.view_tiles.visible_ready.connect(self.worker.page_access_gate.set)
         diagnostic_stage("install note: finished")
         recovered=getattr(self,'_recovery_to_clear',None)
         if recovered and str(Path(prepared.path).resolve())==recovered[1]:
@@ -1749,44 +1752,58 @@ class Viewer(QMainWindow):
         widget.setAcceptDrops(True)
         widget.installEventFilter(self)
 
-    def _dropped_local_path(self,event):
-        if self.worker or self.saver or self.pdf_importer or not event.mimeData().hasUrls():
-            return None
+    def _dropped_local_paths(self,event):
+        workspace=getattr(self,'workspace',None)
+        if (self.worker or self.saver or self.pdf_importer or (workspace and workspace.busy())
+                or not event.mimeData().hasUrls()):
+            return ()
+        from ui.home.dragdrop import NOTE_MIME
+        if event.mimeData().hasFormat(NOTE_MIME):return ()
+        paths=[];seen=set()
+        at_home=workspace is not None and workspace.stack.currentWidget() is workspace.home
         for url in event.mimeData().urls():
             if not url.isLocalFile():
                 continue
             path=url.toLocalFile()
-            if file_action(path) and Path(path).is_file():
-                return path
-        return None
+            if (file_action(path) and Path(path).is_file()) or (at_home and Path(path).is_dir()):
+                key=os.path.normcase(os.path.realpath(path))
+                if key not in seen:seen.add(key);paths.append(path)
+        return tuple(paths)
+
+    def _handle_dropped_files(self,paths):
+        workspace=getattr(self,'workspace',None)
+        if workspace and workspace.stack.currentWidget() is workspace.home:
+            ntbs=[path for path in paths if Path(path).is_dir() or Path(path).suffix.lower()=='.ntb']
+            if ntbs:return workspace.import_ntb_files(ntbs)
+        if paths:self.handle_incoming_file(paths[0])
 
     def eventFilter(self,obj,event):
         if event.type() in (QEvent.Type.DragEnter,QEvent.Type.DragMove,QEvent.Type.Drop):
-            path=self._dropped_local_path(event)
-            if path:
-                event.acceptProposedAction()
+            paths=self._dropped_local_paths(event)
+            if paths:
+                event.setDropAction(Qt.DropAction.CopyAction);event.accept()
                 if event.type()==QEvent.Type.Drop:
-                    self.handle_incoming_file(path)
+                    self._handle_dropped_files(paths)
                 return True
         return super().eventFilter(obj,event)
 
     def dragEnterEvent(self,event):
-        if self._dropped_local_path(event):
-            event.acceptProposedAction()
+        if self._dropped_local_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction);event.accept()
         else:
             event.ignore()
 
     def dragMoveEvent(self,event):
-        if self._dropped_local_path(event):
-            event.acceptProposedAction()
+        if self._dropped_local_paths(event):
+            event.setDropAction(Qt.DropAction.CopyAction);event.accept()
         else:
             event.ignore()
 
     def dropEvent(self,event):
-        path=self._dropped_local_path(event)
-        if path:
-            event.acceptProposedAction()
-            self.handle_incoming_file(path)
+        paths=self._dropped_local_paths(event)
+        if paths:
+            event.setDropAction(Qt.DropAction.CopyAction);event.accept()
+            self._handle_dropped_files(paths)
         else:
             event.ignore()
 
@@ -1862,7 +1879,7 @@ def main():
     app = QApplication(sys.argv)
     app.setOrganizationName('NotabilityEditor')
     app.setApplicationName('NotabilityEditor')
-    app.setApplicationVersion('0.7.9-Beta')
+    app.setApplicationVersion('0.7.10-Beta')
     app.setWindowIcon(QIcon(str(icon_path())))
     app.setStyleSheet(APP_STYLE)
     diagnostic_stage("main window creation")

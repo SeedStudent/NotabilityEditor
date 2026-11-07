@@ -751,10 +751,10 @@ def make_svg(path, has_pdf_background=False, progress=None):
                 d += f'L {pts[0][0]+.001:.3f} {pts[0][1]+page*page_height:.3f} '
             if is_outline:outline_components.append(d+'Z ')
             else:
-                modern.append((page, d, max(0.2, width * (abs(sx)+abs(sy))/2),
+                modern.append((page, d, max(0.001, width * (abs(sx)+abs(sy))/2),
                                rgba, event_id, tool_name,False,tape_pattern))
         if outline_components:
-            modern.append((page,''.join(outline_components),max(0.2,width*(abs(sx)+abs(sy))/2),
+            modern.append((page,''.join(outline_components),max(0.001,width*(abs(sx)+abs(sy))/2),
                            rgba,event_id,tool_name,True,tape_pattern))
 
     from formats.ne_native_shapes import shape_strokes

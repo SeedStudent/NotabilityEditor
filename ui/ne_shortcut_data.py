@@ -17,6 +17,7 @@ SPECS = {
     'redo': ('编辑', '回退', 'Ctrl+Y;Ctrl+Shift+Z', 'global'),
     'draw': ('工具', '画笔', 'B', 'global'),
     'highlight': ('工具', '荧光笔', 'H', 'global'),
+    'shape': ('工具', '图形绘制', 'G', 'global'),
     'erase': ('工具', '橡皮擦', 'E', 'global'),
     'select': ('工具', '选择笔迹', 'S', 'global'),
     'image': ('工具', '图片管理', 'I', 'global'),

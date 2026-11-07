@@ -1,8 +1,9 @@
 """User-initiated, cancellable GitHub release checks without worker threads."""
 from PyQt6 import sip
+import os
 from PyQt6.QtCore import QObject, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest, QSslSocket
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
 from dataclasses import replace
 
@@ -17,11 +18,17 @@ class ReleaseChecker(QObject):
     progress = pyqtSignal(str)
     succeeded = pyqtSignal(object)
     failed = pyqtSignal(str)
-    REQUEST_TIMEOUT_MS = 10000
-    RETRY_DELAYS_MS = (1000, 2000, 3000)
+    REQUEST_TIMEOUT_MS = 8000
+    TOTAL_TIMEOUT_MS = 25000
+    RETRY_DELAYS_MS = (500, 1000, 2000)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Use the Windows certificate store and TLS implementation when available.
+        # Verification remains enabled; never work around a TLS error by ignoring it.
+        if (os.name == 'nt' and 'schannel' in QSslSocket.availableBackends()
+                and QSslSocket.activeBackend() != 'schannel'):
+            QSslSocket.setActiveBackend('schannel')
         self.manager = QNetworkAccessManager(self)
         self.timeout = QTimer(self)
         self.timeout.setSingleShot(True)
@@ -29,6 +36,9 @@ class ReleaseChecker(QObject):
         self.retry_timer = QTimer(self)
         self.retry_timer.setSingleShot(True)
         self.retry_timer.timeout.connect(self._begin_attempt)
+        self.deadline = QTimer(self)
+        self.deadline.setSingleShot(True)
+        self.deadline.timeout.connect(lambda: self._finish_failure('检查超时，请检查网络或系统代理后重试。'))
         self.reply = None
         self.running = False
         self.attempt = 0
@@ -43,10 +53,12 @@ class ReleaseChecker(QObject):
         self.running = True
         self.attempt = 0
         self.source = 'api'
+        self.deadline.start(self.TOTAL_TIMEOUT_MS)
         self._begin_attempt()
 
     def cancel(self):
         self.running = False
+        self.deadline.stop()
         self.retry_timer.stop()
         self._dispose_reply()
 
@@ -69,6 +81,8 @@ class ReleaseChecker(QObject):
         self._request_page()
 
     def _request_page(self):
+        if not self.running:
+            return
         if self.source == 'api':
             url = f'{API_URL}?per_page={PAGE_SIZE}&page={self.page}'
             accept = b'application/vnd.github+json'
@@ -84,6 +98,7 @@ class ReleaseChecker(QObject):
                              QNetworkRequest.RedirectPolicy.SameOriginRedirectPolicy)
         request.setAttribute(QNetworkRequest.Attribute.CacheLoadControlAttribute,
                              QNetworkRequest.CacheLoadControl.AlwaysNetwork)
+        request.setAttribute(QNetworkRequest.Attribute.Http2AllowedAttribute, False)
         self.buffer = bytearray()
         reply = self.reply = self.manager.get(request)
         reply.setReadBufferSize(MAX_RESPONSE_BYTES + 1)
@@ -110,8 +125,15 @@ class ReleaseChecker(QObject):
             reason = 'GitHub 暂时限制访问，请稍后重试。'
         elif status == 404:
             reason = '未找到项目的发布列表。'
+        elif reply.error() == QNetworkReply.NetworkError.SslHandshakeFailedError:
+            reason = '安全连接失败，请检查系统时间及证书设置。'
+        elif reply.error() in (QNetworkReply.NetworkError.ProxyConnectionRefusedError,
+                               QNetworkReply.NetworkError.ProxyNotFoundError,
+                               QNetworkReply.NetworkError.ProxyTimeoutError,
+                               QNetworkReply.NetworkError.ProxyAuthenticationRequiredError):
+            reason = '系统代理连接失败，请检查代理设置。'
         elif status != 200 or reply.error() != QNetworkReply.NetworkError.NoError:
-            reason = '无法连接 GitHub，请检查网络、代理或证书设置。'
+            reason = f'发布服务返回 HTTP {status}，请稍后重试。' if status else '无法连接发布服务，请检查网络或系统代理。'
         else:
             reason = ''
         if reason:
@@ -141,13 +163,12 @@ class ReleaseChecker(QObject):
             return
         latest = max(self.releases, key=lambda item: item.key)
         if self.source == 'feed':
-            # Atom contains recent publications, not necessarily all releases.
-            # It can prove a newer version exists, never that ours is latest.
-            if latest.key <= version_key(VERSION):
-                self._failure('发布订阅不足以确认最新版本，请前往发布页查看。')
-                return
+            # A valid recent feed is a successful fetch, even for internal builds
+            # newer than its entries. Retain its coverage marker in metadata.
             latest = replace(latest, complete=False)
         self.running = False
+        self.deadline.stop()
+        self.retry_timer.stop()
         self.succeeded.emit(latest)
 
     def _failure(self, reason):
@@ -164,10 +185,19 @@ class ReleaseChecker(QObject):
             return
         if self.attempt <= len(self.RETRY_DELAYS_MS):
             self.progress.emit(f'检查未成功，准备重试（{self.attempt}/3）…')
-            self.retry_timer.start(self.RETRY_DELAYS_MS[self.attempt - 1])
+            if self.running:
+                self.retry_timer.start(self.RETRY_DELAYS_MS[self.attempt - 1])
         else:
-            self.running = False
-            self.failed.emit('获取失败\n已在首次请求失败后重试 3 次。\n' + reason)
+            self._finish_failure(reason)
+
+    def _finish_failure(self, reason):
+        if not self.running:
+            return
+        self.running = False
+        self.retry_timer.stop()
+        self.deadline.stop()
+        self._dispose_reply()
+        self.failed.emit(reason)
 
 
 class UpdateDialog(QDialog):
@@ -187,6 +217,11 @@ class UpdateDialog(QDialog):
         self.status.setWordWrap(True)
         self.status.setObjectName('dialogTitle')
         layout.addWidget(self.status)
+        self.detail = QLabel()
+        self.detail.setTextFormat(Qt.TextFormat.PlainText)
+        self.detail.setWordWrap(True)
+        self.detail.hide()
+        layout.addWidget(self.detail)
         layout.addStretch()
         row = QHBoxLayout()
         self.retry = QPushButton('重新检查')
@@ -211,15 +246,16 @@ class UpdateDialog(QDialog):
         self.retry.setEnabled(False)
         self.release_url = RELEASES_URL
         self.status.setToolTip('')
+        self.detail.clear()
+        self.detail.hide()
         self.checker.start()
 
     def _success(self, release):
         self.retry.setEnabled(True)
+        self.status.setToolTip('')
         current = version_key(VERSION)
         if release.key > current:
             self.status.setText('发现新版本：' + release.version)
-        elif not release.complete:
-            self._error('发布订阅不足以确认最新版本，请前往发布页查看。')
         else:
             self.status.setText('当前已是最新版本')
 
@@ -227,6 +263,8 @@ class UpdateDialog(QDialog):
         self.retry.setEnabled(True)
         self.status.setText('获取失败')
         self.status.setToolTip(reason)
+        self.detail.setText(reason)
+        self.detail.show()
 
     def open_release(self):
         if official_release_url(self.release_url):

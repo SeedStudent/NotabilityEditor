@@ -9,8 +9,16 @@ from PyQt6.QtWidgets import (QFrame,QWidget,QHBoxLayout,QVBoxLayout,QToolButton,
 from ui.ne_style import style_menu
 from editing.ne_edits import COLORS,HIGHLIGHT_COLORS
 from ui.ne_colors import ColorPalette
+from ui.ne_tool_buttons import ToolbarButton,EditorToolRow
 
 ICONS={
+ 'shape':'<rect x="3" y="3" width="10" height="10" rx="1"/><circle cx="16" cy="16" r="6"/>',
+ 'shape_line':'<path d="M4 20 20 4"/>',
+ 'shape_arrow':'<path d="M4 20 20 4M10 4h10v10"/>',
+ 'shape_rectangle':'<rect x="3" y="5" width="18" height="14"/>',
+ 'shape_ellipse':'<ellipse cx="12" cy="12" rx="9" ry="7"/>',
+ 'shape_triangle':'<path d="M12 3 22 21H2Z"/>',
+ 'shape_diamond':'<path d="m12 2 10 10-10 10L2 12Z"/>',
  'draw':'<path d="m5 19 1-5L17 3l4 4-11 11-5 1Zm2-6 4 4M15 5l4 4M4 22h13"/>',
  'tape':'<path d="M3 6h18v12H3zM6 6l2 3-2 3 2 3-2 3M16 6l2 3-2 3 2 3-2 3"/>',
  'highlight':'<path d="m4 18 9-14 7 5-9 13H4v-4Zm3-2 7 5M12 7l7 5M3 23h18"/>',
@@ -322,15 +330,17 @@ class EditorPanel(QFrame):
             QAbstractSpinBox::up-arrow {{ image:url("{(assets/'chevron-up.svg').as_posix()}"); width:10px; height:7px; }}
             QAbstractSpinBox::down-arrow,QComboBox::down-arrow {{ image:url("{(assets/'chevron-down.svg').as_posix()}"); width:10px; height:7px; }}
         ''')
-        layout=QVBoxLayout(self);layout.setContentsMargins(18,8,18,10);layout.setSpacing(8)
-        top=QHBoxLayout();top.setSpacing(6);layout.addLayout(top)
+        layout=QVBoxLayout(self);layout.setContentsMargins(12,8,12,10);layout.setSpacing(8)
+        self.tool_row=EditorToolRow(self);layout.addWidget(self.tool_row)
+        top=self.tool_row.tools_layout
+        self.tool_buttons={}
         group=QActionGroup(self);group.setExclusive(True);owner.tools={}
-        for tool,label,key in [('draw','画笔','B'),('highlight','荧光笔','H'),('tape','遮字胶带','T'),('erase','橡皮擦','E'),('select','选择','S'),('image','图片','I'),('read','阅读','V')]:
+        for tool,label,key in [('draw','画笔','B'),('highlight','荧光笔','H'),('tape','遮字胶带','T'),('shape','图形','G'),('erase','橡皮擦','E'),('select','选择','S'),('image','图片','I'),('read','阅读','V')]:
             action=owner.action(self,label,lambda checked=False,t=tool:owner.select_tool(t),key)
             action.setCheckable(True);action.setToolTip(f'{label}（{key}）');action.setIcon(tool_icon(tool));group.addAction(action);owner.tools[tool]=action
-            self.tool_button(top,action)
+            self.tool_buttons[tool]=self.tool_button(top,action)
         owner.tools['read'].setChecked(True)
-        self.separator(top)
+        top=self.tool_row.commands_layout
         owner.undo_action=owner.action(self,'撤销',lambda:owner.canvas.undoEdit() if hasattr(owner.canvas,'undoEdit') else None,'Ctrl+Z')
         owner.redo_action=owner.action(self,'回退',lambda:owner.canvas.redoEdit() if hasattr(owner.canvas,'redoEdit') else None,'Ctrl+Y')
         owner.redo_action.setShortcuts(['Ctrl+Y','Ctrl+Shift+Z'])
@@ -340,23 +350,20 @@ class EditorPanel(QFrame):
         owner.save_as_action.setToolTip('选择新文件名保存（Ctrl+Shift+S）')
         for action,name in [(owner.undo_action,'undo'),(owner.redo_action,'redo'),(owner.save_action,'save'),(owner.save_as_action,'save_as')]:
             if name=='save':
-                top.addStretch()
-                self.page_button=QToolButton();self.page_button.setObjectName('pageManagerToggle')
-                self.page_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-                self.page_button.setIconSize(QSize(20,20));self.page_button.setFixedSize(38,38)
+                self.separator(top)
+                self.page_button=ToolbarButton(icon_only=True);self.page_button.setObjectName('pageManagerToggle')
                 top.addWidget(self.page_button)
             action.setIcon(tool_icon(name,'#ffffff' if name=='save' else '#475569'))
-            button=self.tool_button(top,action)
+            button=self.tool_button(top,action,icon_only=name in ('undo','redo'))
             if name in ('undo','redo'):
-                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly);button.setFixedWidth(36)
                 button.setToolTip(action.text()+'（'+action.shortcut().toString()+'）')
             else:
-                button.setFixedWidth(86 if name=='save_as' else 78)
                 button.setObjectName('primarySave' if name=='save' else 'secondarySave')
+        self.tool_row.sync_layout()
         owner.undo_action.setEnabled(False);owner.redo_action.setEnabled(False)
         self.settings=QStackedWidget();self.settings.setFixedHeight(46);layout.addWidget(self.settings)
         self.pages={}
-        for tool in ('draw','highlight','tape','erase','select','image','read'):
+        for tool in ('draw','highlight','tape','shape','erase','select','image','read'):
             page=QWidget();page.setObjectName('toolSettings');row=QHBoxLayout(page);row.setContentsMargins(12,5,12,5);row.setSpacing(8)
             self.pages[tool]=(page,row);self.settings.addWidget(page)
         row=self.pages['draw'][1];colors=QActionGroup(self);colors.setExclusive(True)
@@ -426,6 +433,8 @@ class EditorPanel(QFrame):
         owner.highlight_opacity.valueChanged.connect(owner.update_edit_settings)
         from ui.ne_tape_controls import build_controls
         build_controls(owner,self)
+        from ui.ne_shape_controls import build_controls as build_shape_controls
+        build_shape_controls(owner,self)
         row=self.pages['erase'][1];row.addWidget(QLabel('擦除方式'))
         owner.erase_mode=QComboBox();owner.erase_mode.addItems(['局部擦除','整笔擦除']);owner.erase_mode.setFixedWidth(120)
         owner.erase_mode.setCurrentIndex(1 if owner.color_settings.value('erase/mode','partial')=='stroke' else 0)
@@ -442,7 +451,15 @@ class EditorPanel(QFrame):
         owner.erase_mode.currentIndexChanged.connect(
             lambda index:owner.remember_tool_setting('erase/mode','stroke' if index==1 else 'partial'))
         row=self.pages['select'][1];self.selection_label=QLabel('框选碰到即选整笔');row.addWidget(self.selection_label);row.addStretch()
-        self.selection_hint=QLabel('选框内拖动 · Shift 追加 · Esc 取消');row.addWidget(self.selection_hint)
+        self.selection_hint=QLabel('框内移动 · 四角等比缩放');row.addWidget(self.selection_hint)
+        self.selection_scale=QDoubleSpinBox();self.selection_scale.setRange(1,2000)
+        self.selection_scale.setDecimals(1);self.selection_scale.setValue(100);self.selection_scale.setSuffix('%')
+        self.selection_scale.setFixedWidth(100);self.selection_scale.setAccessibleName('选中笔迹等比缩放比例')
+        self.selection_scale.setToolTip('相对于当前选区的比例；坐标和笔宽同步缩放，限制在本页内')
+        row.addWidget(self.selection_scale)
+        self.scale_action=owner.action(self,'缩放',lambda:self.apply_selection_scale(owner))
+        self.scale_action.setToolTip('按输入百分比等比例缩放选中笔迹；100% 保持原大小')
+        button=QToolButton();button.setDefaultAction(self.scale_action);row.addWidget(button)
         self.delete_action=owner.action(self,'删除',lambda:owner.canvas.deleteSelection() if hasattr(owner.canvas,'deleteSelection') else None)
         self.delete_action.setIcon(tool_icon('delete'));self.delete_action.setToolTip('删除选中笔迹（Delete）')
         button=QToolButton();button.setDefaultAction(self.delete_action);button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon);button.setIconSize(QSize(20,20));row.addWidget(button)
@@ -452,12 +469,12 @@ class EditorPanel(QFrame):
         # and highlighter: images are no longer a separate QMainWindow toolbar.
         self.image_settings_row=self.pages['image'][1]
         self.image_settings_row.addWidget(QLabel('图片管理'))
-        row=self.pages['read'][1];row.addWidget(QLabel('阅读模式'));row.addStretch();row.addWidget(QLabel('B 画笔    H 荧光笔    T 胶带    E 橡皮擦    S 选择    I 图片    Ctrl+Z 撤销'))
+        row=self.pages['read'][1];row.addWidget(QLabel('阅读模式'));row.addStretch();row.addWidget(QLabel('B 画笔    H 荧光笔    T 胶带    G 图形    E 橡皮擦    S 选择    I 图片    Ctrl+Z 撤销'))
         self.selection_changed(0);self.set_tool('read')
 
-    def tool_button(self,row,action):
-        button=QToolButton();button.setDefaultAction(action);button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        button.setIconSize(QSize(20,20));button.setFixedSize(94 if action.text()=='遮字胶带' else 70,38);row.addWidget(button);return button
+    def tool_button(self,row,action,*,icon_only=False):
+        button=ToolbarButton(icon_only=icon_only);button.setDefaultAction(action)
+        button.setAccessibleName(action.text());row.addWidget(button);return button
 
     def separator(self,row):
         line=QFrame();line.setFixedSize(1,22);line.setStyleSheet('background:#e2e8f0;border:0;');row.addWidget(line)
@@ -504,3 +521,11 @@ class EditorPanel(QFrame):
     def selection_changed(self,count):
         self.selection_label.setText(f'已选 {count} 段笔迹' if count else '圈选笔迹')
         self.delete_action.setEnabled(count>0);self.clear_action.setEnabled(count>0)
+        self.scale_action.setEnabled(count>0);self.selection_scale.setEnabled(count>0)
+
+    def apply_selection_scale(self,owner):
+        canvas=owner.canvas
+        if not hasattr(canvas,'scaleSelectedInk'):return
+        self.selection_scale.interpretText()
+        canvas.scaleSelectedInk(self.selection_scale.value()/100.)
+        self.selection_scale.setValue(100.)

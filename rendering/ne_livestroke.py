@@ -28,11 +28,21 @@ class LiveStroke:
 
     def path(self,op,smooth=True):
         points=op['points']
+        if not points:return QPainterPath()
+        linear=bool(op.get('geometry_is_linear'))
         smart=bool(op.get('smart_interpolation'))
-        mode=(smooth,bool(op.get('capture_smoothing')),smart,op['width'])
-        key=(id(op),mode,len(points),tuple(points[-4:]))
+        mode=(smooth,bool(op.get('capture_smoothing')),smart,op['width'],linear)
+        # Drag-defined shapes replace every vertex; an append-only prefix and
+        # tail-only cache key are valid only for sampled freehand strokes.
+        key=(id(op),mode,len(points),tuple(points if linear else points[-4:]))
         if self.operation is op and self.result_key==key:
             self.path_hits+=1;return self.result
+        if linear:
+            self.operation=op;self.mode=mode
+            self.prefix=QPainterPath();self.next_index=1
+            self.result=Stroke(tuple(points),op['color'],op['width'],geometry_is_linear=True).render_path
+            self.result_key=key
+            return self.result
         if self.operation is not op or self.mode!=mode or len(points)<self.next_index+1:
             self.operation=op;self.prefix=QPainterPath(QPointF(*points[0]));self.next_index=1
             self.mode=mode
@@ -64,6 +74,7 @@ class LiveStroke:
 
     def paint(self,painter,op,smooth=True):
         points=op['points']
+        if not points:return
         painter.save()
         try:
             painter.setRenderHint(painter.RenderHint.Antialiasing,True)

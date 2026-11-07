@@ -80,15 +80,10 @@ class ContinuousInkMixin:
                 self.edits.finish();pending=None
             if pending is None:self._beginInkFragment(page,local(lo))
             pending=self.edits.pending
-            from editing.ne_inkcurve import tail_bounds
-            previous_bounds=tail_bounds(
-                pending['points'],pending['width'],pending.get('capture_smoothing',False),
-                pending.get('smart_interpolation',False))
+            previous_bounds=self._strokeDamageBounds(pending)
             # Never drop a subpixel edge sample: both fragments must meet.
             self.edits.extend(local(hi),force=(hi<1.-1e-10 or lo>1e-10 or getattr(self,'_force_endpoint',False)),timestamp=getattr(self,'_input_time',None))
-            bounds=previous_bounds.united(tail_bounds(
-                pending['points'],pending['width'],pending.get('capture_smoothing',False),
-                pending.get('smart_interpolation',False)))
+            bounds=previous_bounds.united(self._strokeDamageBounds(pending))
             rect=QRectF(left+bounds.left()*width/nw,top+bounds.top()*height/nh,
                         bounds.width()*width/nw,bounds.height()*height/nh)
             damage=damage.united(rect.adjusted(-3,-3,3,3))

@@ -20,7 +20,7 @@ from platform_integration.ne_windows import icon_path
 class HomePage(QWidget):
     changed = pyqtSignal()
 
-    def __init__(self, library, *, new_note, open_note, import_note, import_pdf, open_path):
+    def __init__(self, library, *, new_note, open_note, import_note, import_pdf, open_path, import_folder=None):
         super().__init__()
         self.library, self.open_path = library, open_path
         self.filter = '@home'
@@ -82,6 +82,13 @@ class HomePage(QWidget):
         button.clicked.connect(import_note)
         self.actions['import'] = button
         top.addWidget(button)
+        if import_folder is not None:
+            button = QPushButton('导入文件夹')
+            button.setIcon(tool_icon('open', '#2860d9'))
+            button.setToolTip('成功导入笔记后才创建一级及二级分类；更深层笔记归入所属二级分类，无成功笔记的文件夹不创建分类')
+            button.clicked.connect(import_folder)
+            self.actions['folder'] = button
+            top.addWidget(button)
         content.addWidget(self.top_bar)
         self.upper = QWidget()
         upper = QHBoxLayout(self.upper)
@@ -154,7 +161,7 @@ class HomePage(QWidget):
         self.notes.currentItemChanged.connect(self.selection_changed)
         self.notes.batchChanged.connect(self.selection_changed)
         content.addWidget(self.notes, 1)
-        self.empty = self.label('还没有打开过笔记，点击上方入口开始。', 'homeSubtitle')
+        self.empty = self.label('还没有打开过笔记，可拖入多个 NTB 文件导入，或点击上方入口开始。', 'homeSubtitle')
         self.empty.setWordWrap(True)
         content.addWidget(self.empty)
         footer = QHBoxLayout()
@@ -384,7 +391,7 @@ class HomePage(QWidget):
         self.heading.setText(title)
         self.count.setText(f'{self.note_count()} 本笔记')
         self.empty.setVisible(not self.note_count())
-        self.empty.setText('没有找到匹配的笔记。' if search else '暂无笔记，可在首页打开、导入或新建。')
+        self.empty.setText('没有找到匹配的笔记。' if search else '暂无笔记，可在首页拖入多个 NTB 导入，或打开、新建笔记。')
         self.selection_changed()
         self.layout_cards()
 

@@ -25,6 +25,7 @@ class PdfNoteCanvas(EditingMixin, QWidget):
     editsChanged = pyqtSignal()
     selectionChanged = pyqtSignal(int)
     pagesChanged = pyqtSignal(int)
+    firstPaintReady = pyqtSignal()
     CACHE_BYTES = 64 * 1024 * 1024
     MAX_RENDER_PIXELS = 4_000_000
 
@@ -51,6 +52,7 @@ class PdfNoteCanvas(EditingMixin, QWidget):
             self.pdf_rasters.ready.connect(self._pdfReady)
             self.destroyed.connect(self.pdf_rasters.close)
         self._last_visible_page=0
+        self._first_paint_ready=False
         self.enhance_pages = False
         self.enhancement_strength = 0.6
         self.show_ink = True
@@ -141,7 +143,7 @@ class PdfNoteCanvas(EditingMixin, QWidget):
         nw,nh=self.editPageSize(page)
         painter.save()
         try:
-            painter.setClipRect(target)
+            painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform,True)
             painter.translate(target.left(),target.top())
             painter.scale(target.width()/nw,target.height()/nh)
@@ -314,7 +316,7 @@ class PdfNoteCanvas(EditingMixin, QWidget):
         try:
             painter.setPen(QPen(QColor('#f59e0b' if item['locked'] else '#2563eb'),2,Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setClipRect(target)
+            painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
             rect=QRectF(target.left()+item['x']*target.width()/nw,
                         target.top()+item['y']*target.height()/nh,
                         item['width']*target.width()/nw,item['height']*target.height()/nh)
@@ -555,7 +557,7 @@ class PdfNoteCanvas(EditingMixin, QWidget):
         nw,nh=self.editPageSize(page)
         painter.save()
         try:
-            painter.setClipRect(target)
+            painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
             painter.translate(target.x(),target.y())
             painter.scale(target.width()/nw,target.height()/nh)
             painter.setPen(QColor('black'))
@@ -796,14 +798,15 @@ class PdfNoteCanvas(EditingMixin, QWidget):
 
     def update(self,*args):
         gpu=getattr(self,'_gpu_view',None)
-        if gpu and gpu.active:gpu.refresh()
+        if gpu and gpu.active:gpu.refresh(*args)
         else:super().update(*args)
 
-    def paintVisible(self,painter,rect,dpr):
+    def paintVisible(self,painter,rect,dpr,*,strict=False):
         """Shared raster/OpenGL composition in unchanged canvas coordinates."""
+        painted=False
         painter.save()
         try:
-            painter.setClipRect(rect)
+            painter.setClipRect(rect,Qt.ClipOperation.IntersectClip)
             painter.fillRect(rect, QColor('#42464d'))
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
@@ -823,12 +826,15 @@ class PdfNoteCanvas(EditingMixin, QWidget):
                     image = self._render_page(page, QSize(round(width*dpr), round(height*dpr)),background_only=True,allow_async=True)
                     painter.drawImage(target,image)
                     if use_tiles:self.view_tiles.paint(painter,page,target,dpr)
-                    else:self.content_cache.paint(self,painter,page,target,dpr)
+                    else:
+                        self.content_cache.paint(self,painter,page,target,dpr)
+                        painted=True
                     if self.show_ink:
                         self.paintSelectionOverlay(painter,page,target)
                     self.paintImageSelection(painter,page,target)
                 except Exception as exc:
                     diagnostic_exception('page paint, page ' + str(page+1),exc)
+                    if strict:raise
                     painter.fillRect(target, QColor('white'))
                     painter.setPen(QColor('#b42318'))
                     painter.drawText(target.adjusted(16,16,-16,-16),
@@ -846,7 +852,12 @@ class PdfNoteCanvas(EditingMixin, QWidget):
                 self.paintBrushCursor(painter)
             except Exception as exc:
                 diagnostic_exception('paint tool cursor',exc)
+                if strict:raise
         except Exception as exc:
             diagnostic_exception('paintEvent',exc)
+            if strict:raise
         finally:
             painter.restore()
+        if painted and not self._first_paint_ready:
+            self._first_paint_ready=True
+            self.firstPaintReady.emit()

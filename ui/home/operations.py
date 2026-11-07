@@ -3,14 +3,13 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 import re
-import tempfile
 import time
 from functools import wraps
 
 from PyQt6.QtCore import QFile
 from settings.ne_recent_files import read_recent_files, write_recent_files, canonical_path
 from settings.ne_page_history import read_position_history, write_position_history
-from .library import identity, library_directory
+from .library import identity, library_directory, available_note_path
 
 
 def is_managed(path):
@@ -95,30 +94,52 @@ class NotebookOperations:
             raise ValueError('外部笔记保留原位置，仅修改分类记录。')
         source = Path(path)
         destination = self.library.directory_for_category(category)
-        if source.parent.parent.resolve() == destination.resolve():
+        if source.parent.resolve() == destination.resolve():
             if entry.get('category', '') != category:
                 self._update_path(path, path, category, commit=commit)
             return str(source)
         destination.mkdir(parents=True, exist_ok=True)
-        # Allocate an independent destination so equal notebook names never collide.
-        folder = Path(tempfile.mkdtemp(prefix='note-', dir=destination))
-        target = folder / source.name
+        target = available_note_path(destination, source.name)
+        rename_file(source, target)
         try:
-            rename_file(source, target)
-            try:
-                self._update_path(path, str(target), category, movement={
-                    'time': time.time(), 'from_path': str(source), 'to_path': str(target),
-                    'from_category': entry.get('category', ''), 'to_category': category,
-                    'reason': reason}, commit=commit)
-            except Exception:
-                rename_file(target, source)
-                raise
+            self._update_path(path, str(target), category, movement={
+                'time': time.time(), 'from_path': str(source), 'to_path': str(target),
+                'from_category': entry.get('category', ''), 'to_category': category,
+                'reason': reason}, commit=commit)
         except Exception:
-            folder.rmdir()
+            rename_file(target, source)
             raise
         if cleanup:
             self.cleanup_empty_folders(source)
         return str(target)
+
+    @library_transaction
+    def flatten_legacy_folders(self):
+        """Move only indexed legacy copies; retain unknown contents and locked files."""
+        snapshot = (deepcopy(self.library.data), read_recent_files(self.library.settings),
+                    read_position_history(self.library.settings))
+        moved = []
+        try:
+            for entry in list(self.library.entries()):
+                source = Path(entry['path'])
+                category = entry.get('category', '')
+                if category and category not in self.library.categories:continue
+                destination = self.library.directory_for_category(category)
+                if (source.suffix.lower() not in ('.ntb', '.note') or not is_managed(source) or not re.fullmatch(r'note-[\w-]+', source.parent.name)
+                        or source.parent.parent.resolve() != destination.resolve()):continue
+                try:
+                    target = self.move_category(str(source), category,
+                        reason='flatten_legacy_folder', cleanup=False, commit=False)
+                except OSError:
+                    continue  # A later startup can retry a currently opened file.
+                moved.append((source, Path(target)))
+            if moved:self.library.commit()
+        except Exception:
+            for source, target in reversed(moved):rename_file(target, source)
+            self.restore(snapshot)
+            raise
+        for source, target in moved:self.cleanup_empty_folders(source)
+        return len(moved)
 
     def cleanup_empty_folders(self, source):
         root = library_directory().resolve()

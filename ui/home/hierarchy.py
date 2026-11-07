@@ -11,6 +11,15 @@ def validate_category_name(name):
     return name
 
 
+def import_category_path(category):
+    parts = (category,) if isinstance(category, str) else tuple(category)
+    if len(parts) > 2:
+        raise ValueError('导入分类最多支持两级。')
+    if parts and parts[0] in ('', '未分类'):
+        parts = parts[1:]
+    return tuple(validate_category_name(name) for name in parts)
+
+
 def validate_hierarchy(categories, parents):
     if not isinstance(parents, dict):
         raise ValueError('分类层级数据无效。')

@@ -1,7 +1,7 @@
 """Bounded screen-only stable layers. Vector export keeps its original path."""
 from collections import OrderedDict
 import math
-from PyQt6.QtCore import QRectF,QSize
+from PyQt6.QtCore import QRectF,QSize,Qt
 from PyQt6.QtGui import QImage,QPainter
 from rendering.ne_livestroke import LiveStroke
 from rendering.ne_mixed_layers import scene,paint_native_scene,paint_content,NEW_INK_LAYER
@@ -67,6 +67,7 @@ class ContentCache:
                     entries=[(NEW_INK_LAYER,i,'stroke',Stroke(tuple(op['points']),op['color'],op['width'],
                              op.get('opacity',1.),tool=op.get('tool','pen'),
                              geometry_is_smoothed=bool(op.get('capture_smoothing')),outline=op.get('outline'),
+                             geometry_is_linear=bool(op.get('geometry_is_linear')),
                              tape_pattern=op.get('tape_pattern',3),smart_interpolation=bool(op.get('smart_interpolation'))))
                              for i,op in enumerate(records)]
                     paint_native_scene(c,painter,key[0],QRectF(pair[0].rect()),entries=entries,reveal_tape=c.tape_revealed)
@@ -139,7 +140,7 @@ class ContentCache:
             nw,nh=c.editPageSize(page)
             painter.save()
             try:
-                painter.setClipRect(target)
+                painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
                 painter.translate(target.x(),target.y());painter.scale(target.width()/nw,target.height()/nh)
                 # PageEdits.pending is a display-page wrapper created on each
                 # access; the core operation retains identity across samples.

@@ -1,6 +1,6 @@
 {
-  "version": "0.7.9-Beta",
-  "base_version": "0.7.9",
+  "version": "0.7.10-Beta",
+  "base_version": "0.7.10",
   "stage": "Beta",
   "channel": "relese",
   "internal_iteration": null,
@@ -13,15 +13,15 @@
     ],
     "relese_priority": "同一基础版本和 Beta 阶段下，relese 高于任意 v数字 内部版本，不设内部编号阈值。",
     "internal_priority": "v数字 按整数比较，例如 v10 > v9；不得按字符串字典序比较。",
-    "base_priority": "基础版本号优先，因此 0.7.10-Beta-v1 高于 0.7.9-Beta (relese)。",
+    "base_priority": "基础版本号优先，因此 0.8.0-Beta-v1 高于 0.7.10-Beta (relese)。",
     "examples_ascending": [
-      "0.7.8-Beta (relese)",
-      "0.7.9-Beta-v8",
       "0.7.9-Beta (relese)",
-      "0.7.10-Beta-v1"
+      "0.7.10-Beta-v9",
+      "0.7.10-Beta (relese)",
+      "0.8.0-Beta-v1"
     ]
   },
-  "description": "由 v8 定版的 relese，包含两级分类、拖动整理及旧版一级分类兼容修复",
+  "description": "由 v9 定版的正式发布版，包含图形绘制、选区缩放、全屏工具栏及两级分类文件夹导入",
   "windows_registration_policy": "注册或安装前比较已安装和已注册版本；同基础版本 relese 高于所有内部 v数字，旧版本不能覆盖较新版本。",
   "product_name": "NotabilityEditor",
   "legacy_product_names": [
@@ -105,7 +105,7 @@
       2
     ],
     "paper_texture_preview": "旧式纹理使用底色近似；原始纸张设置在 NTB 中保留不变。",
-    "version_policy": "0.7.9-Beta-v8 为 internal 内部开发版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
+    "version_policy": "0.7.10-Beta 为 relese 正式发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "seamless_pages": {
     "revision": "2026-10-29",
@@ -122,7 +122,7 @@
     ],
     "undo": "一次绘制或擦除的所有跨页改动可一次撤销或重做",
     "storage": "按原生页面边界拆分，保留接缝笔宽；关闭衔接后仍按页显示和保存",
-    "version_policy": "0.7.9-Beta-v8 为 internal 内部开发版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
+    "version_policy": "0.7.10-Beta 为 relese 正式发布版；基础版本优先，同基础版本 relese 高于任意内部版本，内部编号按整数比较。"
   },
   "smart_interpolation": {
     "revision": "2026-11-01",
@@ -227,8 +227,8 @@
     "save_snapshot": "immutable shared components; mutable writer input created on worker",
     "migration_scope": "document history and save values; existing Qt adapters retained"
   },
-  "release_date": null,
-  "created_date": "2026-11-05",
+  "release_date": "2026-11-07",
+  "created_date": "2026-11-07",
   "provenance": {
     "source_version": "0.7.9-Beta-v4",
     "released_baseline": "0.7.8-Beta",
@@ -278,7 +278,7 @@
     "ui": "Retain existing styles, colors, layouts, buttons and menus"
   },
   "update_check": {
-    "revision": "2026-11-03",
+    "revision": "2026-11-06",
     "repository": "https://github.com/SeedStudent/NotabilityEditor",
     "menus": [
       "设置 → 检查更新…",
@@ -288,14 +288,15 @@
     "source": "Published GitHub Releases including prereleases; REST API with official repository Atom feed fallback",
     "api_failure_policy": "Switch to official Releases feed on API failure; remaining retries use the feed instead of repeatedly hitting a failed API",
     "feed_validation": "Require Atom namespace, exact repository identity and official release tag links; invalid/error pages never mean up to date",
-    "feed_completeness": "A finite recent feed can confirm a newer version exists, but cannot confirm the current version is latest; retry then fail when inconclusive",
+    "feed_completeness": "A valid recent feed succeeds for newer, equal and older entries; retain the coverage marker in metadata. API and feed share the same visible result wording.",
     "version_order": "core.ne_version.version_key; recognize leading v in release tags",
     "failure_retries": 3,
     "maximum_attempts": 4,
-    "request_timeout_ms": 10000,
+    "request_timeout_ms": 8000,
+    "overall_timeout_ms": 25000,
     "failure_text": "获取失败",
-    "presentation": "Compact result only: new version or already up to date; no release source explanation or notes",
-    "network": "Asynchronous QtNetwork; closing cancels requests and retries",
+    "presentation": "When a higher version is returned, show 发现新版本; otherwise show 当前已是最新版本. Network failures show 获取失败 with a visible reason.",
+    "network": "Asynchronous QtNetwork with a total deadline; Windows Schannel when available, certificate verification preserved, HTTP/1.1 compatibility; closing cancels requests and all timers, including cancellation inside progress callbacks",
     "download": "Always-enabled 前往发布页 button opens the project Releases page during checking, success or failure; no automatic download or installation"
   },
   "free_software_notice": {
@@ -427,5 +428,72 @@
     "drag": "Drag note bodies to sidebar categories or group headers; checkbox drags retain rubber-band selection. Internal payload and source are verified.",
     "context_menu": "Right-click blank sidebar space to create a root category; right-click a root to select it and create a child."
   },
-  "promoted_from": "0.7.9-Beta-v8"
+  "based_on": "0.7.10-Beta-v9",
+  "shape_tools": {
+    "tools": [
+      "line",
+      "arrow",
+      "rectangle",
+      "ellipse",
+      "triangle",
+      "diamond"
+    ],
+    "shortcut": "G",
+    "settings": [
+      "shape/kind",
+      "shape/color",
+      "shape/width"
+    ],
+    "interaction": "拖动预览，释放完成；Shift 约束；Esc 取消",
+    "storage": "原生笔迹路径，与现有选择、擦除、撤销和保存链路共用"
+  },
+  "editor_toolbar": {
+    "button_sizing": "按文字宽度适配，统一左右留白与图标文字间距；选中加粗不移动相邻按钮",
+    "layout": "绘制工具与快捷操作分组；窄窗口将操作组换至下一行",
+    "fullscreen": "全屏按钮合并到快捷操作组，与菜单共用同一动作"
+  },
+  "selection_resize": {
+    "interaction": "选框四角拖动或输入百分比等比例缩放；Esc 取消",
+    "geometry": "坐标、笔宽及填充轮廓同步等比缩放",
+    "history": "一次缩放一次撤销，支持保存和恢复快照"
+  },
+  "gpu_drawing": {
+    "refresh": "合并高频局部更新，保留帧缓冲，仅重绘变化区域；画笔输入采样独立保留",
+    "fullscreen": "窗口尺寸、缩放、滚动位置、DPI 或帧缓冲变化后完整重建画面；移除多重采样帧缓冲",
+    "recovery": "GPU 绘制报错、连续慢帧或请求的新画面长时间未提交时切换软件绘制；上下文重建及延迟回调核对所属画布",
+    "scope": "屏幕显示路径；保留笔迹数据、编辑手势和原有导出流程"
+  },
+  "selection_highlight": {
+    "coverage": "荧光笔使用浅色选中反馈，画笔线条以明显蓝色在上层突出显示；同类笔段统一覆盖，不逐段描边或反复叠加透明度，取消选择恢复原色",
+    "preview": "框选、套索、移动和等比例缩放共用高亮；移动复用缓存，缩放按预览几何刷新",
+    "scope": "仅屏幕选区反馈，不改写笔迹、命中区域或笔记内容"
+  },
+  "fullscreen_toolbar": {
+    "positions": [
+      "bottom",
+      "top",
+      "left",
+      "right"
+    ],
+    "default": "bottom",
+    "remember": "view/fullscreen_toolbar_position",
+    "preference": "设置 → 全屏工具栏位置；菜单选择与拖动停靠共用偏好，退出及重启后沿用最后位置",
+    "tools": "八种工具共用原有 QAction；大图标、中文标签、选中高亮与至少 44 个逻辑像素点击区域",
+    "settings": "当前工具设置入口紧邻绘图工具，复用原有工具设置，按需展开并在退出全屏后恢复常规工具栏",
+    "overflow": "短屏或窄屏允许沿工具栏方向滚动，位置与退出按钮保持可用",
+    "side": "64 逻辑像素窄侧栏，至少 44×44 点击区域，设置按需展开",
+    "drag": "拖动握柄时只绘制虚线停靠预览；松开后保存位置，Esc 或移出窗口取消",
+    "side_commands": "侧边模式将撤销、重做、保存和页面管理集中放置在画布右上角；顶部和底部模式将这四个按钮固定在工具栏右侧"
+  },
+  "home_batch_import": {
+    "trigger": "首页拖入多个本地 NTB 文件或文件夹，或使用导入文件夹按钮",
+    "folders": "根文件夹作为同名一级分类，子文件夹作为同名二级分类；笔记进入对应分类，更深层笔记归入所属二级分类，同层同名分类复用",
+    "empty_categories": "一级和二级分类均在笔记成功导入并登记时创建；整个文件夹没有成功导入的笔记时不创建分类，失败或取消时清理本次新建的空目录，保留已有分类",
+    "traversal": "使用迭代扫描，跳过目录联接和符号链接，以目录标识去重；支持深层目录与扫描取消，读取失败汇总后继续",
+    "storage": "笔记直接存入分类目录，重名依次追加 -副本、-副本2，不覆盖已有笔记",
+    "migration": "启动时整理已索引的旧 note-* 子目录，同步笔记索引、最近打开和阅读位置，保留未知内容与暂时无法移动的文件",
+    "execution": "后台逐份复制与校验，成功加入笔记库后留在首页",
+    "cancel": "保留已导入笔记，取消当前及后续文件",
+    "failures": "单份失败继续处理其他文件，结束显示汇总与失败详情"
+  }
 }

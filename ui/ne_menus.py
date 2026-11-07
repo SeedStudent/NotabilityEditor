@@ -19,7 +19,8 @@ def apply_selection_preferences(owner,*,activate=False):
                                    highlighter=getattr(owner,'selection_highlighter',True))
     shape_label={'rectangle':'矩形','lasso':'自由套索'}[shape]
     mode_label={'ai':'本地 AI','smart':'字形归组','exact':'接触整笔','contained':'完整包含'}[mode]
-    owner.editor_panel.selection_hint.setText(f'{shape_label} · {mode_label} · Shift 追加 · Alt 减选')
+    owner.editor_panel.selection_hint.setText(f'{shape_label} · {mode_label} · 四角缩放')
+    owner.editor_panel.selection_hint.setToolTip('框内拖动移动；四角拖动等比缩放；Shift 追加；Alt 减选；Esc 取消')
     if activate:owner.select_tool('select')
 
 
@@ -66,6 +67,9 @@ def build_menus(owner):
     owner.menus['工具'].addAction(owner.tools['tape'])
     owner.menus['工具'].addAction(owner.tape_reveal_action)
     owner.menus['工具'].addSeparator()
+    shape_menu=owner.menus['工具'].addMenu('图形')
+    shape_menu.addAction(owner.tools['shape']);shape_menu.addSeparator()
+    for action in owner.shape_actions.values():shape_menu.addAction(action)
     selection=owner.menus['工具'].addMenu('选择');owner.selection_menu=selection
     selection.addAction(owner.tools['select']);selection.addSeparator()
     owner.selection_shape_actions={};owner.selection_mode_actions={}
@@ -353,6 +357,7 @@ def refresh_menu_state(owner):
     owner.save_as_action.setEnabled(editable and not busy)
     owner.select_all_action.setEnabled(editable)
     for name,action in owner.tools.items():action.setEnabled(paged if name=='read' else image_ready if name=='image' else editable)
+    for action in owner.shape_actions.values():action.setEnabled(editable)
     for action in (owner.zoom_in_action,owner.zoom_out_action,owner.fit_action):action.setEnabled(ready)
     for action in (owner.previous_action,owner.next_action,owner.first_action,owner.last_action,owner.goto_action):action.setEnabled(paged)
     for action in (owner.ink,owner.sampling_precision_action,owner.smart_interpolation_action,
@@ -364,6 +369,7 @@ def refresh_menu_state(owner):
     if hasattr(owner,'recent_menu'):owner.recent_menu.setEnabled(not busy)
     selected=bool(editable and getattr(owner.canvas,'selected_indices',None))
     owner.editor_panel.delete_action.setEnabled(selected);owner.editor_panel.clear_action.setEnabled(selected)
+    owner.editor_panel.scale_action.setEnabled(selected);owner.editor_panel.selection_scale.setEnabled(selected)
     if hasattr(owner,'move_to_page_action'):
         selection=getattr(owner.canvas,'selected_image',None)
         image=owner.canvas.editableImageItem(*selection) if selection else None
@@ -388,7 +394,7 @@ def show_about(owner):
     layout=QVBoxLayout(dialog)
     layout.setContentsMargins(26,24,26,22)
     layout.setSpacing(16)
-    add_dialog_header(layout,'NotabilityEditor','版本 0.7.9-Beta · Windows 本地笔记查看与编辑')
+    add_dialog_header(layout,'NotabilityEditor','版本 0.7.10-Beta · Windows 本地笔记查看与编辑')
     add_dialog_divider(layout)
     info=QLabel('打开文件支持 NTB、NOTE；导入功能目前只支持 PDF，并创建可编辑的 NTB。\nNTB 支持画笔、荧光笔、页面管理及批量删除。\n'
                 '可导出带底图和笔迹的 PDF，也可导出 NOTE。')
@@ -430,11 +436,13 @@ def show_help(owner):
             ('导出 NOTE', '原 NOTE 无损复制；NTB → NOTE 包含背景 PDF 和独立笔迹，仍属实验性转换'),
         ]),
         ('编辑',[
-            ('切换工具', 'B 画笔 · H 荧光笔 · E 橡皮擦 · S 选择 · V 阅读'),
+            ('切换工具', 'B 画笔 · H 荧光笔 · G 图形 · E 橡皮擦 · S 选择 · V 阅读'),
+            ('图形绘制', '拖动绘制直线、箭头、矩形、椭圆、三角形或菱形；Shift 约束角度或比例，Esc 取消。支持独立颜色、线宽及笔迹选择、移动和擦除'),
             ('自定义颜色', '画笔、荧光笔分别支持预设色与自定义 HEX 色值'),
             ('笔宽和预览', '两种工具最小笔宽 0.1；移动鼠标可预览实际笔尖大小'),
             ('笔迹操作', 'Ctrl+Z 撤销 · Ctrl+Y / Ctrl+Shift+Z 回退 · Delete 删除选中笔迹'),
             ('笔迹选取', '工具 → 选择 切换自由形状或矩形，以及接触整笔、完整包含、字形归组；Shift 追加，Alt 减选，Esc 取消'),
+            ('笔迹缩放', '选中笔迹后拖动选框四角等比例放大或缩小；也可输入百分比并点击缩放。坐标与笔宽同步变化，Ctrl+Z 撤销'),
             ('图片编辑', 'Ctrl+Shift+I 插入图片，选择工具拖动移动或拖动四角等比例缩放；主工具栏「图片」显示二级操作栏，可固定、解锁、调层级及删除（背景不可越过）'),
         ]),
         ('页面',[

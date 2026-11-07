@@ -52,10 +52,10 @@ class ColorPalette(QObject):
 
     def __init__(self, settings, tool, parent=None):
         super().__init__(parent)
-        if tool not in ('draw', 'highlight'):
+        if tool not in ('draw', 'highlight', 'shape'):
             raise ValueError('Unknown color tool')
         from editing.ne_edits import COLORS,HIGHLIGHT_COLORS
-        defaults=list((COLORS if tool=='draw' else HIGHLIGHT_COLORS).values())
+        defaults=list((HIGHLIGHT_COLORS if tool=='highlight' else COLORS).values())
         self.settings, self.key = settings, tool + '/palette_colors'
         first_use=not settings.contains(self.key)
         try:

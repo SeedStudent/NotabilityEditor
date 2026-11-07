@@ -352,18 +352,22 @@ class EditModel:
 
     @classmethod
     def apply(cls,state,op):
-        if op['kind'] in ('move','delete'):
+        if op['kind'] in ('move','delete','transform'):
             selected=set(op['indices']);changed=set(state[1]);output=[]
             for index,stroke in enumerate(state[0]):
                 if index not in selected:output.append(stroke);continue
                 if stroke.source_id is not None:changed.add(stroke.source_id)
                 if op['kind']=='move':
                     output.append(replace(stroke,points=tuple((x+op['dx'],y+op['dy']) for x,y in stroke.points)))
+                elif op['kind']=='transform':
+                    from editing.ne_selection_resize import scale_stroke
+                    output.append(scale_stroke(stroke,op['scale'],op['anchor']))
             return output,changed
         if op['kind']=='draw':
             stroke=Stroke(tuple(map(tuple,op['points'])),op['color'],op['width'],
                           op.get('opacity',1.0),tool=op.get('tool','pen'),
                           geometry_is_smoothed=bool(op.get('capture_smoothing')),
+                          geometry_is_linear=bool(op.get('geometry_is_linear')),
                           outline=op.get('outline'),tape_pattern=op.get('tape_pattern',3),
                           smart_interpolation=bool(op.get('smart_interpolation')))
             return (state[0]+[stroke],set(state[1]))
@@ -381,14 +385,20 @@ class EditModel:
                               start is not None and index>=start)
         return state
 
-    def change_selection(self,page,indices,dx=0.,dy=0.,delete=False):
+    def change_selection(self,page,indices,dx=0.,dy=0.,delete=False,*,scale=1.,anchor=(0.,0.)):
         """One selection gesture is one undo entry; indices refer to its base state."""
         self.finish()
         if not all(math.isfinite(v) for v in (dx,dy)):raise ValueError('移动坐标无效')
+        if (not math.isfinite(scale) or not 0<scale<=1000
+                or len(anchor)!=2 or not all(math.isfinite(v) for v in anchor)):
+            raise ValueError('笔迹缩放比例或中心无效')
         state=self.state(page)
         indices=tuple(sorted({i for i in indices if 0<=i<len(state[0])}))
-        if not indices or (not delete and abs(dx)+abs(dy)<1e-8):return False
-        op=dict(kind='delete' if delete else 'move',page=page,indices=indices,dx=dx,dy=dy)
+        if not indices or (not delete and abs(dx)+abs(dy)<1e-8 and abs(scale-1.)<1e-8):return False
+        if not delete and scale!=1.:
+            if any(state[0][i].width*scale>1000 for i in indices):raise ValueError('缩放后的笔宽超出保存范围')
+            op=dict(kind='transform',page=page,indices=indices,scale=scale,anchor=tuple(anchor))
+        else:op=dict(kind='delete' if delete else 'move',page=page,indices=indices,dx=dx,dy=dy)
         result=self.apply(state,op)
         del self.history[self.cursor:]
         self.next_token+=1;self.history.append((self.next_token,op));self.cursor+=1

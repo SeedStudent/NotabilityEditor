@@ -9,12 +9,14 @@ from editing.ne_selection import SelectionMixin
 from editing.ne_brushmetrics import brush_preview_radii
 from images.ne_image_resize import resize_corner
 from editing.ne_continuous_ink import ContinuousInkMixin
+from editing.ne_shape_tools import ShapeDrawingMixin
 
-class EditingMixin(ContinuousInkMixin,SelectionMixin):
+class EditingMixin(ShapeDrawingMixin,ContinuousInkMixin,SelectionMixin):
     def initEditing(self):
         self.original_edit_cache=OrderedDict()
         self.edits=EditModel(self.originalStrokes)
         self.edit_tool='read';self.pen_color='#e53935';self.pen_width=2.0
+        self.shape_kind='rectangle';self.shape_color='#e53935';self.shape_width=2.0
         self.highlight_color=HIGHLIGHT_COLORS['黄'];self.highlight_width=16.0;self.highlight_opacity=.42
         self.tape_color='#d5ebf5';self.tape_width=24.;self.tape_pattern=0;self.tape_revealed=False
         self.eraser_width=18.;self.eraser_mode='partial';self.hover_point=None
@@ -76,18 +78,21 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
             self._moveHover(fallback)
 
     def _syncBrushCursor(self):
+        resize_cursor=self._selectionResizeCursor(self.hover_point)
         is_brush = self.edit_tool in ('draw', 'highlight', 'tape', 'erase')
         inside_page = (is_brush and self.show_ink and self.hover_point is not None
                        and self.pointOnPage(self.hover_point) is not None)
         if getattr(self, '_navigation_drag', False):
             shape = Qt.CursorShape.ClosedHandCursor
+        elif resize_cursor is not None:
+            shape = resize_cursor
         elif inside_page:
             shape = Qt.CursorShape.BlankCursor
         elif self._reading_pan is not None:
             shape = Qt.CursorShape.ClosedHandCursor
         elif self.edit_tool == 'read' or (self.hover_point is not None and self.pointOnPage(self.hover_point) is None):
             shape = Qt.CursorShape.OpenHandCursor
-        elif self.edit_tool in ('erase', 'select', 'image'):
+        elif self.edit_tool in ('erase', 'select', 'image', 'shape'):
             shape = Qt.CursorShape.CrossCursor
         else:
             shape = Qt.CursorShape.ArrowCursor
@@ -210,7 +215,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         outline = QColor(self.pen_color if self.edit_tool == 'draw' else self.tape_color if self.edit_tool == 'tape' else self.highlight_color)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setClipRect(QRectF(left, top, draw_width, draw_height))
+        painter.setClipRect(QRectF(left, top, draw_width, draw_height),Qt.ClipOperation.IntersectClip)
         # At subpixel widths the actual circular footprint may be hard to spot.
         # Draw a separate, nonfilled locator ring; the central painted nib remains
         # at exactly the chosen page-unit width (independent of the locator size).
@@ -257,6 +262,9 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         if self.edit_tool=='select':return self.beginSelection(position,modifiers)
         if hit is None:return False
         page,point=hit;kind='erase' if self.edit_tool=='erase' else 'draw'
+        if self.edit_tool=='shape':
+            self._beginShapeGesture(page,point,modifiers)
+            self.setFocus();self.update();return True
         if getattr(self,'seamless_pages',False) and self.edit_tool in ('draw','highlight','tape','erase'):
             self._beginContinuousDraw(page,point,position)
             self.setFocus();self.update();return True
@@ -275,7 +283,23 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
                              capture_smooth if kind=='draw' else False,'pen',capture_smooth)
         self.setFocus();self.update();return True
 
-    def extendGesture(self,position):
+    def _strokeDamageBounds(self,op):
+        from editing.ne_inkcurve import tail_bounds
+        bounds=tail_bounds(op['points'],op['width'],op.get('capture_smoothing',False),
+                           op.get('smart_interpolation',False))
+        if op.get('tool')=='tape':
+            # Simplifying a swept tape outline can also change the rasterized
+            # edge of its prefix. Repaint this stroke's extent, not just its
+            # tail, without walking every captured point on every input event.
+            core=self.edits.core if hasattr(self.edits,'core') else self.edits
+            if getattr(self,'_tape_damage_operation',None) is not core.pending:
+                self._tape_damage_operation=core.pending;self._tape_damage_bounds=bounds
+            else:self._tape_damage_bounds=self._tape_damage_bounds.united(bounds)
+            return self._tape_damage_bounds
+        return bounds
+
+    def extendGesture(self,position,modifiers=None):
+        if self._extendShapeGesture(position,modifiers):return
         if self.selection_drag:self.extendSelection(position);return
         if self._continuous_draw is not None:
             self._extendContinuousDraw(position);return
@@ -296,15 +320,11 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
                 self.edits.extend(tuple(p+(q-p)*fraction for p,q in zip(start,end)))
             self.finishGesture();return
         op=self.edits.pending
-        from editing.ne_inkcurve import tail_bounds
-        previous_bounds=tail_bounds(op['points'],op['width'],op.get('capture_smoothing',False),
-                                    op.get('smart_interpolation',False))
+        previous_bounds=self._strokeDamageBounds(op)
         self.edits.extend(hit[1],force=getattr(self,'_force_endpoint',False),timestamp=getattr(self,'_input_time',None))
         if op['kind']=='draw':
             page=op['page'];nw,nh=self.editPageSize(page);dw,dh=self.draw_sizes[page]
-            bounds=previous_bounds.united(tail_bounds(
-                op['points'],op['width'],op.get('capture_smoothing',False),
-                op.get('smart_interpolation',False)))
+            bounds=previous_bounds.united(self._strokeDamageBounds(op))
             rect=QRectF((self.width()-dw)/2+bounds.left()*dw/nw,
                         self.pageTop(page)+bounds.top()*dh/nh,
                         bounds.width()*dw/nw,bounds.height()*dh/nh)
@@ -330,6 +350,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
 
     def finishGesture(self):
         if hasattr(self,'_drag_scroll_timer'):self._drag_scroll_timer.stop()
+        if hasattr(self,'edits'):self._finishShapeGesture()
         if getattr(self,'_image_history_before',None) is not None:self.finishImageGesture()
         if hasattr(self,'selection_drag') and self.selection_drag:self.finishSelection()
         continuous=self._finishContinuousDraw()
@@ -412,7 +433,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         if getattr(self,'_image_drag',None):
             self._moveImageDrag(event.position())
             event.accept();return
-        self._updatePointerHover(event.position());self.extendGesture(event.position())
+        self._updatePointerHover(event.position());self.extendGesture(event.position(),event.modifiers())
         if self.edits.pending or self.selection_drag or self._continuous_draw is not None:event.accept()
         else:super().mouseMoveEvent(event)
 
@@ -431,7 +452,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
             self.editsChanged.emit();self.update();event.accept();return
         if event.button()==Qt.MouseButton.LeftButton and (self.edits.pending or self.selection_drag or self._continuous_draw is not None):
             self._force_endpoint=True
-            try:self.extendGesture(event.position());self.finishGesture();event.accept()
+            try:self.extendGesture(event.position(),event.modifiers());self.finishGesture();event.accept()
             finally:self._force_endpoint=False
         else:super().mouseReleaseEvent(event)
 
@@ -479,10 +500,10 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         self._moveHover(event.position())
         if event.type()==QEvent.Type.TabletPress:
             if not self.beginGesture(event.position(),event.modifiers()):event.ignore();return
-        elif event.type()==QEvent.Type.TabletMove:self.extendGesture(event.position())
+        elif event.type()==QEvent.Type.TabletMove:self.extendGesture(event.position(),event.modifiers())
         elif event.type()==QEvent.Type.TabletRelease:
             self._force_endpoint=True
-            try:self.extendGesture(event.position());self.finishGesture()
+            try:self.extendGesture(event.position(),event.modifiers());self.finishGesture()
             finally:self._force_endpoint=False
         event.accept()
 
@@ -497,7 +518,9 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         return manager.matches(name,event) if manager else False
 
     def keyPressEvent(self,event):
-        if event.key()==Qt.Key.Key_Escape:
+        if event.key()==Qt.Key.Key_Shift and self._shapeOperation() is not None:
+            self._reshapeGesture(True);event.accept()
+        elif event.key()==Qt.Key.Key_Escape:
             self._drag_scroll_timer.stop()
             self._cancelReadingPan();self._syncBrushCursor()
             self._finishContinuousDraw(cancel=True)
@@ -529,7 +552,7 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
         # may have inherited default (aliased) hints, so enable AA here too.
         # This also covers thumbnails, PDF export and edited cross-page ink.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setClipRect(target)
+        painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
         try:
             if not edited and not active and not moving:
                 renderer=self._ink_renderer(page)
@@ -544,11 +567,12 @@ class EditingMixin(ContinuousInkMixin,SelectionMixin):
                 painter.translate(target.left(),target.top())
                 painter.scale(target.width()/nw,target.height()/nh)
                 paint_strokes(painter,self.selectedPreview(page,self.edits.state(page)[0]),smooth=getattr(self,'ink_smoothing',True))
-                if active and self.edits.pending['kind']=='draw':
+                if active and self.edits.pending['kind']=='draw' and self.edits.pending['points']:
                     op=self.edits.pending
                     paint_strokes(painter,[Stroke(tuple(op['points']),op['color'],op['width'],
                         op.get('opacity',1.0),tool=op.get('tool','pen'),tape_pattern=op.get('tape_pattern',3),
                         geometry_is_smoothed=bool(op.get('capture_smoothing')),
+                        geometry_is_linear=bool(op.get('geometry_is_linear')),
                         smart_interpolation=bool(op.get('smart_interpolation')))],
                         smooth=getattr(self,'ink_smoothing',True))
                 painter.restore()

@@ -4,9 +4,9 @@ rem ASCII-only .BAT file. Do not save as UTF-8 BOM.
 rem Set UTF-8 console mode for paths, logs and subprocess output.
 chcp 65001 >nul
 cd /d "%~dp0"
-title NotabilityEditor 0.7.9-Beta - Windows Setup
+title NotabilityEditor 0.7.10-Beta - Windows Setup
 echo ============================================================
-echo          NotabilityEditor 0.7.9-Beta - SETUP
+echo          NotabilityEditor 0.7.10-Beta - SETUP
 echo ============================================================
 echo.
 echo Step 1: Prepare Python 3.11 environment.

@@ -14,7 +14,7 @@ from PyQt6.QtCore import QSettings, QThread, pyqtSignal
 from settings.ne_recent_files import canonical_path, read_recent_files
 from .storage import (LibraryStore, validate_library, merge_library, LibraryConflictError,
                       compatible_library, decode_library)
-from .hierarchy import validate_category_name, validate_hierarchy, category_rows
+from .hierarchy import validate_category_name, validate_hierarchy, category_rows, import_category_path
 
 
 def identity(path):
@@ -51,6 +51,8 @@ class Library:
             changed = self.adopt_legacy_history()
             if (migrated or self.store.recovered or self.store.needs_compatibility_save) and not changed:
                 self.commit()
+            from .operations import NotebookOperations
+            NotebookOperations(self).flatten_legacy_folders()
         except OSError as exc:
             self.storage_notice = str(exc)
 
@@ -173,6 +175,32 @@ class Library:
         self.commit()
 
     @library_edit
+    def record_import(self, path, category_name=''):
+        before = deepcopy(self.data)
+        try:
+            category = self._import_category(category_name)
+            path = canonical_path(path)
+            self.data['notes'][identity(path)] = dict(path=path, category=category, opened=time.time())
+            self.commit()
+        except Exception:
+            self.data = before
+            raise
+
+    def _import_category(self, path):
+        category = ''
+        for name in import_category_path(path):
+            parent = category
+            category = next((key for key, value in self.categories.items()
+                if value.casefold() == name.casefold() and self.category_parents.get(key, '') == parent), '')
+            if not category:
+                self.validate_category(name, parent)
+                category = uuid.uuid4().hex
+                self.categories[category] = name
+                if parent:self.category_parents[category] = parent
+                self.directory_for_category(category).mkdir(parents=True, exist_ok=True)
+        return category
+
+    @library_edit
     def add_category(self, name, parent=''):
         name = self.validate_category(name, parent)
         key = uuid.uuid4().hex
@@ -246,22 +274,42 @@ def category_directory(name='未分类'):
     return directory
 
 
+def import_category_directory(category):
+    parts = import_category_path(category)
+    directory = category_directory(parts[0]) if parts else category_directory()
+    if len(parts) == 2:directory /= parts[1]
+    if not directory.resolve().is_relative_to(library_directory().resolve()):
+        raise ValueError('分类目录必须位于本机笔记库内。')
+    return directory
+
+
 class ImportCancelled(Exception):
     pass
 
 
+def available_note_path(directory, name):
+    directory, name = Path(directory), Path(name)
+    target = directory / name.name
+    index = 1
+    while target.exists():
+        suffix = '-副本' + (str(index) if index > 1 else '')
+        target = directory / (name.stem + suffix + name.suffix)
+        index += 1
+    return target
+
+
 def copy_note(source, directory, progress=lambda value: None, cancelled=lambda: False):
-    """Commit into a unique directory; partial files never become library entries."""
+    """Publish a complete copy directly in its category, without overwriting names."""
     source = Path(source).resolve(strict=True)
     if source.suffix.lower() not in ('.ntb', '.note') or not source.is_file():
         raise ValueError('导入笔记仅支持 NTB 和 NOTE 文件。')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix='note-', dir=directory))
-    target = folder / source.name
-    partial = folder / '.importing'
+    fd, temporary = tempfile.mkstemp(prefix='.import-', suffix='.tmp', dir=directory)
+    partial = Path(temporary)
+    target = None
     try:
-        with source.open('rb') as incoming, partial.open('xb') as outgoing:
+        with os.fdopen(fd, 'wb') as outgoing, source.open('rb') as incoming:
             before = os.fstat(incoming.fileno())
             total = 0
             while True:
@@ -280,13 +328,24 @@ def copy_note(source, directory, progress=lambda value: None, cancelled=lambda: 
             os.fsync(outgoing.fileno())
         if cancelled():
             raise ImportCancelled()
-        os.replace(partial, target)
+        while True:
+            candidate = available_note_path(directory, source.name)
+            try:
+                if os.name == 'nt':
+                    os.rename(partial, candidate)  # Windows refuses an existing destination.
+                    target = candidate
+                else:
+                    os.link(partial, candidate)
+                    target = candidate
+                    partial.unlink()
+                break
+            except FileExistsError:
+                if cancelled():raise ImportCancelled()
         progress(100)
         return str(target)
     except BaseException:
         partial.unlink(missing_ok=True)
-        target.unlink(missing_ok=True)
-        folder.rmdir()
+        if target is not None:target.unlink(missing_ok=True)
         raise
 
 

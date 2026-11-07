@@ -111,7 +111,7 @@ def install():
         file = path / ("session-" + time.strftime("%Y%m%d-%H%M%S") + ".log")
         _log = file.open("a", encoding="utf-8", buffering=1)
         _level = load_level()
-        _write("NotabilityEditor 0.7.9-Beta crash diagnostics")
+        _write("NotabilityEditor 0.7.10-Beta crash diagnostics")
         _write("Python=" + sys.version.replace("\n", " "))
         _write("Platform=" + sys.platform + "; frozen=" + str(getattr(sys, "frozen", False)))
         _write('Log level: '+_level)

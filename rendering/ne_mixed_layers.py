@@ -114,13 +114,14 @@ def scene(c,page,include_ink=True,include_text=True,*,static=False,defer_svg=Fal
                     el=etree.fromstring(data);ident=int(el.get('data-event-id',0))
                     z=z_value(c,ident,int(el.get('data-z-index',0)))
                     entries.append((z,ident,'svg',el))
-        if active and c.edits.pending['kind']=='draw':
+        if active and c.edits.pending['kind']=='draw' and c.edits.pending['points']:
             op=c.edits.pending
             z=NEW_INK_LAYER+1
             entries.append((z,0,'stroke',Stroke(
                 tuple(op['points']),op['color'],op['width'],
                 op.get('opacity',1.0),tool=op.get('tool','pen'),
                 geometry_is_smoothed=bool(op.get('capture_smoothing')),tape_pattern=op.get('tape_pattern',3),
+                geometry_is_linear=bool(op.get('geometry_is_linear')),
                 smart_interpolation=bool(op.get('smart_interpolation')))))
     return sorted(entries,key=lambda x:(x[0],x[1]))
 
@@ -141,7 +142,7 @@ def paint_native_scene(c,painter,page,target,include_ink=True,include_text=True,
             QSvgRenderer(etree.tostring(svg_root)).render(painter,QRectF(0,0,nw,nh))
             svg_root=None
     try:
-        painter.setClipRect(target)
+        painter.setClipRect(target,Qt.ClipOperation.IntersectClip)
         painter.translate(target.x(),target.y());painter.scale(target.width()/nw,target.height()/nh)
         for _,ident,kind,r in entries:
             if kind=='svg' and r.get('data-tool')=='tape':

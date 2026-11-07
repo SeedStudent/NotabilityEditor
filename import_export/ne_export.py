@@ -64,7 +64,7 @@ def write_pdf(canvas,prepared,target,progress=lambda current,total:None,cancelle
         writer=QPdfWriter(str(temp))
         writer.setResolution(144)
         writer.setTitle(Path(prepared.path).stem)
-        writer.setCreator('NotabilityEditor 0.7.9-Beta')
+        writer.setCreator('NotabilityEditor 0.7.10-Beta')
         writer.setPageMargins(QMarginsF(0,0,0,0),QPageLayout.Unit.Point)
         def page_size(w,h):
             # ExactMatch avoids snapping close sizes to a standard paper format.

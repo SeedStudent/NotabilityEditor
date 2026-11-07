@@ -45,6 +45,10 @@ class ShortcutManager:
             value = self.settings.value('shortcuts/' + key, None)
             if value is not None:
                 self.bindings[key] = normalize_binding(str(value))
+        # A newly introduced default must not displace a user's existing G binding.
+        if (self.settings.value('shortcuts/shape', None) is None
+                and find_conflict(self.bindings, 'shape', self.bindings['shape'])):
+            self.bindings['shape'] = ''
         # Safeguard imported or manually modified registry values.
         for key in SPECS:
             if find_conflict(self.bindings, key, self.bindings[key]):
@@ -67,7 +71,7 @@ class ShortcutManager:
             'fit': owner.fit_action, 'goto': owner.goto_action,
             'sidebar': owner.page_toggle_action, 'help': owner.help_action,
         }
-        actions.update({key: owner.tools[key] for key in ('draw', 'highlight', 'erase', 'select', 'image', 'read')})
+        actions.update({key: owner.tools[key] for key in ('draw', 'highlight', 'shape', 'erase', 'select', 'image', 'read')})
         for name, action in actions.items():
             shortcuts = [QKeySequence.fromString(s, QKeySequence.SequenceFormat.PortableText)
                          for s in self.bindings[name].split(';') if s]
